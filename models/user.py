@@ -4,9 +4,9 @@ from datetime import datetime
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, nullable=False)
-    password = Column(String, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password = Column(String, nullable=False)  # Changed from hashed_password to match DB
     mobile = Column(String)
     api_key = Column(String)
     api_secret = Column(String)
@@ -14,3 +14,6 @@ class User(Base):
     session_id = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     session_updated_at = Column(DateTime, default=datetime.utcnow)
+    refresh_token = Column(String, nullable=True)
+    otp = Column(String, nullable=True)
+    otp_expiry = Column(DateTime, nullable=True)
