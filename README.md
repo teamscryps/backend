@@ -2,7 +2,7 @@
 
 A comprehensive FastAPI backend application with authentication, user management, trading functionality, and database integration. This application provides a robust API for user authentication, order management, trade tracking, and audit logging.
 
-## 🚀 Features
+##  Features
 
 ### Authentication & Security
 - **JWT-based authentication** with access and refresh tokens
@@ -28,7 +28,7 @@ A comprehensive FastAPI backend application with authentication, user management
 - **Comprehensive error handling**
 - **Swagger/OpenAPI documentation**
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 backend/
@@ -58,7 +58,7 @@ backend/
 └── README.md           # This documentation
 ```
 
-## 🛠️ Setup & Installation
+##  Setup & Installation
 
 ### Prerequisites
 - Python 3.8+
@@ -118,7 +118,7 @@ uvicorn main:app --reload
 # http://127.0.0.1:8000
 ```
 
-## 📚 API Documentation
+##  API Documentation
 
 ### Authentication Endpoints
 
@@ -192,7 +192,7 @@ All authentication endpoints return tokens in this format:
 }
 ```
 
-## 🔐 Security Features
+##  Security Features
 
 ### JWT Authentication
 - **Access tokens**: Short-lived (30 minutes) for API access
@@ -210,7 +210,7 @@ All authentication endpoints return tokens in this format:
 - **Single-use**: OTP is invalidated after successful login
 - **Email delivery**: Secure OTP delivery via SMTP
 
-## 🗄️ Database Models
+##  Database Models
 
 ### User Model
 ```python
@@ -236,7 +236,7 @@ class User(Base):
 - **Trade**: Trade execution tracking
 - **Audit**: Compliance and audit logging
 
-## 🧪 Testing
+##  Testing
 
 ```bash
 # Run tests
@@ -246,14 +246,14 @@ python -m pytest tests/
 python -m pytest tests/ --cov=.
 ```
 
-## 📖 API Documentation
+##  API Documentation
 
 Once the server is running, you can access:
 - **Swagger UI**: `http://127.0.0.1:8000/docs`
 - **ReDoc**: `http://127.0.0.1:8000/redoc`
 - **OpenAPI JSON**: `http://127.0.0.1:8000/openapi.json`
 
-## 🚀 Deployment
+##  Deployment
 
 ### Development
 ```bash
@@ -266,7 +266,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
 
-## 🤝 Contributing
+##  Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -274,11 +274,11 @@ gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 4. Add tests for new functionality
 5. Submit a pull request
 
-## 📄 License
+##  License
 
 This project is licensed under the MIT License.
 
-## 🆘 Support
+##  Support
 
 For support and questions:
 - Create an issue in the repository
