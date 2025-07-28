@@ -1,0 +1,12 @@
+# Environment variables and secrets
+# Ignore all .env files, but keep the example
+.env*
+!.env.example
+
+# Environment directory
+# Ignore the virtual environment directory, but keep it in the tree
+env/
+!env/.gitkeep
+
+.app.db
+app.db
