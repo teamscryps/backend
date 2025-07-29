@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 from sqlalchemy_utils import ChoiceType
@@ -22,3 +23,5 @@ class Trade(Base):
     brokerage_charge = Column(Float)  # deduction: brokerage
     mtf_charge = Column(Float)  # deduction: mtf charge
     type = Column(ChoiceType(TradeType)) # 'eq' or 'mtf'
+    order_id = Column(Integer, ForeignKey('orders.id'))
+    order = relationship("Order", back_populates="trades")
