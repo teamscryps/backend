@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from cryptography.fernet import Fernet
 
 class Settings(BaseSettings):
     # Application Settings
@@ -28,6 +29,8 @@ class Settings(BaseSettings):
     
     # API Settings
     API_V1_STR: str = "/api/v1"
+
+    ENCRYPTION_KEY: str = Fernet.generate_key().decode()
 
     class Config:
         env_file = ".env"

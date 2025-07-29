@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, Float,Integer,String,ForeignKey, DateTime
+from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 
@@ -12,5 +13,6 @@ class Order(Base):
     price=Column(Float)
     order_type=Column(String)
     mtf_enabled=Column(Boolean, default=False)
+    trades = relationship("Trade", back_populates="order")
  
 # If theres incomplete order, we can use this to track the order

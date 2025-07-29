@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta
-from fastapi import HTTPException
+from fastapi import HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from config import settings
+from database import get_db
+from sqlalchemy.orm import Session
 import random
 import string
 
@@ -48,4 +50,24 @@ def verify_otp(otp: str, stored_otp: str, expiry: datetime) -> bool:
         return False
     if datetime.utcnow() > expiry:
         return False
-    return otp == stored_otp 
+    return otp == stored_otp
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    from models.user import User
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise credentials_exception
+    return user 

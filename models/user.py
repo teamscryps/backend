@@ -17,3 +17,4 @@ class User(Base):
     refresh_token = Column(String, nullable=True)
     otp = Column(String, nullable=True)
     otp_expiry = Column(DateTime, nullable=True)
+    broker_refresh_token = Column(String, nullable=True)
