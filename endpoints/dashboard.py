@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from sqlalchemy.orm import Session, selectinload
 from typing import List, Dict, Any
 from database import get_db
 from schemas.trades import TradeOut
@@ -18,13 +19,8 @@ from pydantic import BaseModel, HttpUrl, validator
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
 import redis.asyncio as redis
-import logging
-from sqlalchemy.orm import selectinload
 import json
-
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from endpoints.logs import log_action, log_error, log_request
 
 # Initialize Fernet for encryption
 fernet = Fernet(settings.ENCRYPTION_KEY)
@@ -38,10 +34,10 @@ async def init_rate_limiter():
 
 router = APIRouter(dependencies=[Depends(init_rate_limiter)])
 
-# Pydantic schema for brokerage activation
+# Pydantic schemas
 class BrokerageActivation(BaseModel):
     brokerage: str
-    api_url: HttpUrl
+    api_url: str
     api_key: str
     api_secret: str
     request_token: str | None = None
@@ -53,13 +49,20 @@ class BrokerageActivation(BaseModel):
             raise ValueError("Invalid brokerage")
         return v.lower()
 
-async def refresh_zerodha_session(user: UserModel, db: Session) -> str:
+class OrderRequest(BaseModel):
+    stock_ticker: str
+    quantity: int
+    price: float
+    order_type: str  # "buy" or "sell"
+
+async def refresh_zerodha_session(user: UserModel, db: Session, request: Request, correlation_id: str) -> str:
     """
     Refresh Zerodha session using the refresh_token.
     Returns the new access_token.
     """
+    log_action("start_refresh_zerodha_session", user, correlation_id, {"broker": "zerodha"})
     if not user.broker_refresh_token:
-        logger.error(f"No refresh token available for user: {user.email}")
+        log_error("missing_refresh_token", Exception("No refresh token available"), user, correlation_id, {"broker": "zerodha"})
         raise HTTPException(status_code=400, detail="No refresh token available")
 
     decrypted_refresh_token = fernet.decrypt(user.broker_refresh_token.encode()).decode()
@@ -78,12 +81,12 @@ async def refresh_zerodha_session(user: UserModel, db: Session) -> str:
                 timeout=10
             )
             if response.status_code != 200:
-                logger.error(f"Zerodha session refresh failed: {response.status_code}")
+                log_error("zerodha_session_refresh_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "zerodha", "status_code": response.status_code})
                 raise HTTPException(status_code=400, detail="Failed to refresh Zerodha session")
             session_data = response.json()
             new_access_token = session_data.get("data", {}).get("access_token")
             if not new_access_token:
-                logger.error(f"No access token received from Zerodha refresh for user: {user.email}")
+                log_error("no_access_token", Exception("No access token received"), user, correlation_id, {"broker": "zerodha"})
                 raise HTTPException(status_code=400, detail="No access token received from Zerodha")
 
             # Update user with new encrypted access token
@@ -91,10 +94,10 @@ async def refresh_zerodha_session(user: UserModel, db: Session) -> str:
             user.session_updated_at = datetime.utcnow()
             db.commit()
             db.refresh(user)
-            logger.info(f"Zerodha session refreshed for user: {user.email}")
+            log_action("zerodha_session_refreshed", user, correlation_id, {"broker": "zerodha"})
             return new_access_token
         except httpx.RequestError as e:
-            logger.error(f"Zerodha refresh API error: {str(e)}")
+            log_error("zerodha_refresh_api_error", e, user, correlation_id, {"broker": "zerodha"})
             raise HTTPException(status_code=503, detail=f"Zerodha service unavailable: {str(e)}")
 
 # Dashboard Data Endpoint
@@ -103,15 +106,16 @@ async def refresh_zerodha_session(user: UserModel, db: Session) -> str:
     response_model=dict,
     dependencies=[Depends(RateLimiter(times=3, seconds=1))]
 )
-async def get_dashboard_data(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_dashboard_data(current_user: User = Depends(get_current_user), db: Session = Depends(get_db), request: Request = None):
     """
     Fetch all data required for the dashboard, including trades, portfolio, and funds.
     """
+    correlation_id = await log_request(request, "fetch_dashboard_data", current_user)
     try:
         # Fetch user with eager loading
         user = db.query(UserModel).filter(UserModel.email == current_user.email).first()
         if not user:
-            logger.error(f"User not found: {current_user.email}")
+            log_error("user_not_found", Exception("User not found"), current_user, correlation_id, {"email": current_user.email})
             raise HTTPException(status_code=404, detail="User not found")
 
         # Validate brokerage session
@@ -124,9 +128,9 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                         timeout=5
                     )
                     if response.status_code == 401:
-                        logger.warning(f"Invalid Zerodha session for user: {user.email}, attempting refresh")
+                        log_action("attempt_zerodha_session_refresh", user, correlation_id, {"broker": "zerodha"})
                         # Attempt to refresh session
-                        new_access_token = await refresh_zerodha_session(user, db)
+                        new_access_token = await refresh_zerodha_session(user, db, request, correlation_id)
                         # Retry holdings request with new token
                         response = await client.get(
                             "https://api.kite.trade/portfolio/holdings",
@@ -134,10 +138,10 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                             timeout=5
                         )
                         if response.status_code != 200:
-                            logger.error(f"Zerodha holdings fetch failed after refresh: {response.status_code}")
+                            log_error("zerodha_holdings_fetch_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "zerodha", "status_code": response.status_code})
                             raise HTTPException(status_code=401, detail="Failed to validate Zerodha session")
                 except httpx.RequestError as e:
-                    logger.error(f"Zerodha API error: {str(e)}")
+                    log_error("zerodha_api_error", e, user, correlation_id, {"broker": "zerodha"})
                     raise HTTPException(status_code=503, detail="Brokerage service unavailable")
 
         # Fetch ongoing trades
@@ -177,9 +181,9 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                         unused_funds = margins.get("available", {}).get("cash", 0)
                         allocated_funds = margins.get("utilised", {}).get("debits", 0)
                     else:
-                        logger.warning(f"Failed to fetch Zerodha margins: {response.status_code}")
+                        log_error("zerodha_margins_fetch_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "zerodha", "status_code": response.status_code})
                 except httpx.RequestError as e:
-                    logger.error(f"Zerodha margins API error: {str(e)}")
+                    log_error("zerodha_margins_api_error", e, user, correlation_id, {"broker": "zerodha"})
 
         # Calculate portfolio overview
         total_invested = sum(trade.capital_used for trade in ongoing_trades)
@@ -195,7 +199,7 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
         cached_data = {
             "activity_status": {
                 "is_active": bool(user.session_id),
-                "last_active": user.session_updated_at.isoformat() if user.session_updated_at else None
+                "last_active": user.session_updated_at.strftime("%b %d, %Y %H:%M:%S") if user.session_updated_at else None
             },
             "portfolio_overview": {
                 "value": round(portfolio_value, 2),
@@ -213,7 +217,7 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
             ],
             "recent_trades": [
                 {
-                    "date": trade.order_executed_at.strftime("%b %d"),
+                    "date": trade.order_executed_at.strftime("%b %d, %Y %H:%M:%S"),
                     "stock": trade.stock_ticker,
                     "bought": trade.buy_price,
                     "sold": trade.sell_price or 0,
@@ -246,10 +250,11 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
             }
         }
         await redis_client.setex(cache_key, 300, json.dumps(cached_data))
+        log_action("dashboard_data_fetched", current_user, correlation_id, {"cached": True})
 
         return cached_data
     except Exception as e:
-        logger.error(f"Error fetching dashboard data for {current_user.email}: {str(e)}")
+        log_error("fetch_dashboard_data_failed", e, current_user, correlation_id)
         raise HTTPException(status_code=500, detail=f"Error fetching dashboard data: {str(e)}")
 
 # Brokerage Activation Endpoint
@@ -260,16 +265,18 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
 async def activate_brokerage(
     activation: BrokerageActivation,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request = None
 ):
     """
     Activate a brokerage account (Zerodha or Groww) and store encrypted credentials.
     """
+    correlation_id = await log_request(request, "activate_brokerage", current_user, {"brokerage": activation.brokerage})
     try:
         # Fetch user
         user = await get_user_by_email(db, current_user.email)
         if not user:
-            logger.error(f"User not found: {current_user.email}")
+            log_error("user_not_found", Exception("User not found"), current_user, correlation_id, {"email": current_user.email})
             raise HTTPException(status_code=404, detail="User not found")
 
         # Encrypt sensitive data
@@ -281,7 +288,7 @@ async def activate_brokerage(
         # Brokerage-specific logic
         if activation.brokerage == "zerodha":
             if not activation.request_token:
-                logger.warning(f"Missing request token for Zerodha activation: {user.email}")
+                log_error("missing_request_token", Exception("Request token required"), user, correlation_id, {"broker": "zerodha"})
                 raise HTTPException(status_code=400, detail="Request token required for Zerodha")
 
             async with httpx.AsyncClient() as client:
@@ -297,20 +304,20 @@ async def activate_brokerage(
                         timeout=10
                     )
                     if response.status_code != 200:
-                        logger.error(f"Zerodha session creation failed: {response.status_code}")
+                        log_error("zerodha_session_creation_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "zerodha", "status_code": response.status_code})
                         raise HTTPException(status_code=400, detail="Failed to validate Zerodha credentials")
                     session_data = response.json()
                     access_token = session_data.get("data", {}).get("access_token")
                     refresh_token = session_data.get("data", {}).get("refresh_token")
                     if not access_token or not refresh_token:
-                        logger.error(f"Missing access_token or refresh_token from Zerodha for user: {user.email}")
+                        log_error("invalid_zerodha_response", Exception("Missing access_token or refresh_token"), user, correlation_id, {"broker": "zerodha"})
                         raise HTTPException(status_code=400, detail="Invalid response from Zerodha")
 
                     # Encrypt tokens
                     encrypted_session_id = fernet.encrypt(access_token.encode()).decode()
                     encrypted_refresh_token = fernet.encrypt(refresh_token.encode()).decode()
                 except httpx.RequestError as e:
-                    logger.error(f"Zerodha API error: {str(e)}")
+                    log_error("zerodha_api_error", e, user, correlation_id, {"broker": "zerodha"})
                     raise HTTPException(status_code=503, detail=f"Zerodha service unavailable: {str(e)}")
 
         elif activation.brokerage == "groww":
@@ -323,13 +330,13 @@ async def activate_brokerage(
                         timeout=10
                     )
                     if response.status_code != 200:
-                        logger.error(f"Groww session creation failed: {response.status_code}")
+                        log_error("groww_session_creation_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "groww", "status_code": response.status_code})
                         raise HTTPException(status_code=400, detail="Failed to validate Groww credentials")
                     session_data = response.json()
                     session_id = session_data.get("session_id", "mock-groww-session-id")
                     encrypted_session_id = fernet.encrypt(session_id.encode()).decode()
                 except httpx.RequestError as e:
-                    logger.error(f"Groww API error: {str(e)}")
+                    log_error("groww_api_error", e, user, correlation_id, {"broker": "groww"})
                     raise HTTPException(status_code=503, detail=f"Groww service unavailable: {str(e)}")
 
         # Update user with encrypted brokerage details
@@ -342,11 +349,199 @@ async def activate_brokerage(
         db.commit()
         db.refresh(user)
 
-        logger.info(f"Brokerage {activation.brokerage} activated for user: {user.email}")
+        log_action("brokerage_activated", user, correlation_id, {"broker": activation.brokerage})
         return {"message": f"{activation.brokerage} activated successfully", "session_id": fernet.decrypt(encrypted_session_id.encode()).decode()}
     except Exception as e:
-        logger.error(f"Error activating brokerage for {current_user.email}: {str(e)}")
+        log_error("brokerage_activation_failed", e, current_user, correlation_id, {"broker": activation.brokerage})
         raise HTTPException(status_code=500, detail=f"Error activating brokerage: {str(e)}")
+
+# View Specific Trade Endpoint
+@router.get(
+    "/trade/{trade_id}",
+    response_model=TradeOut,
+    dependencies=[Depends(RateLimiter(times=5, seconds=1))]
+)
+async def get_trade(trade_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db), request: Request = None):
+    """
+    Fetch details of a specific trade by ID.
+    """
+    correlation_id = await log_request(request, "view_trade", current_user, {"trade_id": trade_id})
+    try:
+        trade = db.query(Trade).options(selectinload(Trade.order)).filter(Trade.id == trade_id, Trade.user_id == current_user.id).first()
+        if not trade:
+            log_error("trade_not_found", Exception("Trade not found"), current_user, correlation_id, {"trade_id": trade_id})
+            raise HTTPException(status_code=404, detail="Trade not found")
+        log_action("trade_viewed", current_user, correlation_id, {"trade_id": trade_id, "stock_ticker": trade.stock_ticker})
+        return trade
+    except Exception as e:
+        log_error("view_trade_failed", e, current_user, correlation_id, {"trade_id": trade_id})
+        raise HTTPException(status_code=500, detail=f"Error fetching trade: {str(e)}")
+
+# Place Buy Order Endpoint
+@router.post(
+    "/order/buy",
+    response_model=OrderOut,
+    dependencies=[Depends(RateLimiter(times=3, seconds=1))]
+)
+async def place_buy_order(
+    order: OrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Place a buy order with the specified brokerage.
+    """
+    correlation_id = await log_request(request, "place_buy_order", current_user, {"stock_ticker": order.stock_ticker, "quantity": order.quantity})
+    try:
+        user = db.query(UserModel).filter(UserModel.email == current_user.email).first()
+        if not user:
+            log_error("user_not_found", Exception("User not found"), current_user, correlation_id, {"email": current_user.email})
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user.broker != "zerodha" or not user.session_id:
+            log_error("broker_not_activated", Exception("Broker not activated"), user, correlation_id, {"broker": user.broker})
+            raise HTTPException(status_code=400, detail="Broker not activated")
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    "https://api.kite.trade/orders/regular",
+                    headers={"Authorization": f"token {fernet.decrypt(user.session_id.encode()).decode()}"},
+                    data={
+                        "tradingsymbol": order.stock_ticker,
+                        "exchange": "NSE",
+                        "transaction_type": "BUY",
+                        "order_type": "MARKET",
+                        "quantity": order.quantity,
+                        "product": "CNC"
+                    },
+                    timeout=10
+                )
+                if response.status_code == 401:
+                    log_action("attempt_zerodha_session_refresh", user, correlation_id, {"broker": "zerodha"})
+                    new_access_token = await refresh_zerodha_session(user, db, request, correlation_id)
+                    response = await client.post(
+                        "https://api.kite.trade/orders/regular",
+                        headers={"Authorization": f"token {new_access_token}"},
+                        data={
+                            "tradingsymbol": order.stock_ticker,
+                            "exchange": "NSE",
+                            "transaction_type": "BUY",
+                            "order_type": "MARKET",
+                            "quantity": order.quantity,
+                            "product": "CNC"
+                        },
+                        timeout=10
+                    )
+                if response.status_code != 200:
+                    log_error("zerodha_order_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "zerodha", "status_code": response.status_code})
+                    raise HTTPException(status_code=400, detail="Failed to place buy order")
+                
+                order_data = response.json().get("data", {})
+                new_order = Order(
+                    user_id=user.id,
+                    stock_ticker=order.stock_ticker,
+                    quantity=order.quantity,
+                    order_type="buy",
+                    price=order.price,
+                    status="executed",
+                    order_executed_at=datetime.utcnow()
+                )
+                db.add(new_order)
+                db.commit()
+                db.refresh(new_order)
+                log_action("buy_order_placed", user, correlation_id, {"stock_ticker": order.stock_ticker, "quantity": order.quantity, "order_id": new_order.id})
+                return new_order
+            except httpx.RequestError as e:
+                log_error("zerodha_order_api_error", e, user, correlation_id, {"broker": "zerodha", "stock_ticker": order.stock_ticker})
+                raise HTTPException(status_code=503, detail=f"Zerodha service unavailable: {str(e)}")
+    except Exception as e:
+        log_error("place_buy_order_failed", e, current_user, correlation_id, {"stock_ticker": order.stock_ticker})
+        raise HTTPException(status_code=500, detail=f"Error placing buy order: {str(e)}")
+
+# Place Sell Order Endpoint
+@router.post(
+    "/order/sell",
+    response_model=OrderOut,
+    dependencies=[Depends(RateLimiter(times=3, seconds=1))]
+)
+async def place_sell_order(
+    order: OrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Place a sell order with the specified brokerage.
+    """
+    correlation_id = await log_request(request, "place_sell_order", current_user, {"stock_ticker": order.stock_ticker, "quantity": order.quantity})
+    try:
+        user = db.query(UserModel).filter(UserModel.email == current_user.email).first()
+        if not user:
+            log_error("user_not_found", Exception("User not found"), current_user, correlation_id, {"email": current_user.email})
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user.broker != "zerodha" or not user.session_id:
+            log_error("broker_not_activated", Exception("Broker not activated"), user, correlation_id, {"broker": user.broker})
+            raise HTTPException(status_code=400, detail="Broker not activated")
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    "https://api.kite.trade/orders/regular",
+                    headers={"Authorization": f"token {fernet.decrypt(user.session_id.encode()).decode()}"},
+                    data={
+                        "tradingsymbol": order.stock_ticker,
+                        "exchange": "NSE",
+                        "transaction_type": "SELL",
+                        "order_type": "MARKET",
+                        "quantity": order.quantity,
+                        "product": "CNC"
+                    },
+                    timeout=10
+                )
+                if response.status_code == 401:
+                    log_action("attempt_zerodha_session_refresh", user, correlation_id, {"broker": "zerodha"})
+                    new_access_token = await refresh_zerodha_session(user, db, request, correlation_id)
+                    response = await client.post(
+                        "https://api.kite.trade/orders/regular",
+                        headers={"Authorization": f"token {new_access_token}"},
+                        data={
+                            "tradingsymbol": order.stock_ticker,
+                            "exchange": "NSE",
+                            "transaction_type": "SELL",
+                            "order_type": "MARKET",
+                            "quantity": order.quantity,
+                            "product": "CNC"
+                        },
+                        timeout=10
+                    )
+                if response.status_code != 200:
+                    log_error("zerodha_order_failed", Exception(f"Status: {response.status_code}"), user, correlation_id, {"broker": "zerodha", "status_code": response.status_code})
+                    raise HTTPException(status_code=400, detail="Failed to place sell order")
+                
+                order_data = response.json().get("data", {})
+                new_order = Order(
+                    user_id=user.id,
+                    stock_ticker=order.stock_ticker,
+                    quantity=order.quantity,
+                    order_type="sell",
+                    price=order.price,
+                    status="executed",
+                    order_executed_at=datetime.utcnow()
+                )
+                db.add(new_order)
+                db.commit()
+                db.refresh(new_order)
+                log_action("sell_order_placed", user, correlation_id, {"stock_ticker": order.stock_ticker, "quantity": order.quantity, "order_id": new_order.id})
+                return new_order
+            except httpx.RequestError as e:
+                log_error("zerodha_order_api_error", e, user, correlation_id, {"broker": "zerodha", "stock_ticker": order.stock_ticker})
+                raise HTTPException(status_code=503, detail=f"Zerodha service unavailable: {str(e)}")
+    except Exception as e:
+        log_error("place_sell_order_failed", e, current_user, correlation_id, {"stock_ticker": order.stock_ticker})
+        raise HTTPException(status_code=500, detail=f"Error placing sell order: {str(e)}")
 
 def generate_zerodha_checksum(api_key: str, token: str, api_secret: str) -> str:
     """

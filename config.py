@@ -1,3 +1,4 @@
+
 from pydantic_settings import BaseSettings
 from cryptography.fernet import Fernet
 
@@ -31,6 +32,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     ENCRYPTION_KEY: str = Fernet.generate_key().decode()
+
+    LOG_LEVEL: str = "INFO"
 
     class Config:
         env_file = ".env"

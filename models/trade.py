@@ -13,6 +13,7 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
     stock_ticker = Column(String, nullable=False)
     buy_price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=False)
