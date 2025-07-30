@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 
@@ -18,3 +19,7 @@ class User(Base):
     otp = Column(String, nullable=True)
     otp_expiry = Column(DateTime, nullable=True)
     broker_refresh_token = Column(String, nullable=True)
+    
+    # Relationships
+    orders = relationship("Order", back_populates="user")
+    trades = relationship("Trade", back_populates="user")

@@ -19,4 +19,4 @@ class OrderOut(OrderBase):
     order_executed_at: datetime | None
 
     class Config:
-        orm_mode = True 
+        from_attributes = True 

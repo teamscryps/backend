@@ -15,6 +15,9 @@ class Order(Base):
     order_type=Column(String)
     mtf_enabled=Column(Boolean, default=False)
     order_executed_at=Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="orders")
     trades = relationship("Trade", back_populates="order")
  
 # If theres incomplete order, we can use this to track the order
