@@ -10,6 +10,7 @@ from schemas.user import User
 from config import settings
 import uuid
 import traceback
+from audit_service import log_action_to_db, log_request_to_db, log_error_to_db
 
 class Logger:
     def __init__(self, log_file: str = "logs/app.log", max_log_days: int = 7):
@@ -75,6 +76,7 @@ class Logger:
             context["warning"] = "No authenticated user provided"
         context_str = json.dumps(context or {}, ensure_ascii=False)
 
+        # Log to file
         self.logger.log(
             level=getattr(logging, level.upper(), logging.INFO),
             msg=action,
@@ -85,6 +87,26 @@ class Logger:
                 "context": context_str
             }
         )
+
+        # Also log to database (async)
+        try:
+            from database import SessionLocal
+            db = SessionLocal()
+            log_action_to_db(
+                db=db,
+                action=action,
+                level=level,
+                user_id=str(user_id),
+                user_email=user_email,
+                correlation_id=correlation_id,
+                context=context
+            )
+        except Exception as e:
+            # Fallback if database logging fails
+            print(f"Database logging failed: {e}")
+        finally:
+            if 'db' in locals():
+                db.close()
 
     async def log_request(
         self,
@@ -103,7 +125,31 @@ class Logger:
             "url": str(request.url),
             "client_ip": request.client.host if request.client else "unknown"
         })
+        
+        # Log to file
         self.log_action(action, "INFO", user, correlation_id, context)
+        
+        # Also log to database
+        try:
+            from database import SessionLocal
+            db = SessionLocal()
+            log_request_to_db(
+                db=db,
+                action=action,
+                method=request.method,
+                url=str(request.url),
+                client_ip=request.client.host if request.client else "unknown",
+                user_id=str(user.id) if user else "anonymous",
+                user_email=user.email if user else "anonymous",
+                correlation_id=correlation_id,
+                context=context
+            )
+        except Exception as e:
+            print(f"Database request logging failed: {e}")
+        finally:
+            if 'db' in locals():
+                db.close()
+        
         return correlation_id
 
     def log_error(
@@ -120,7 +166,28 @@ class Logger:
         context = context or {}
         context["error"] = str(error)
         context["stack_trace"] = "".join(traceback.format_tb(error.__traceback__)) if hasattr(error, "__traceback__") else "N/A"
+        
+        # Log to file
         self.log_action(action, "ERROR", user, correlation_id, context)
+        
+        # Also log to database
+        try:
+            from database import SessionLocal
+            db = SessionLocal()
+            log_error_to_db(
+                db=db,
+                action=action,
+                error=error,
+                user_id=str(user.id) if user else "anonymous",
+                user_email=user.email if user else "anonymous",
+                correlation_id=correlation_id,
+                context=context
+            )
+        except Exception as e:
+            print(f"Database error logging failed: {e}")
+        finally:
+            if 'db' in locals():
+                db.close()
 
 # Singleton logger instance
 logger_instance = Logger()
