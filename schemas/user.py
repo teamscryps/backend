@@ -8,6 +8,7 @@ class UserCreate(UserBase):
 
 class User(UserBase):
     id: int
+    capital: int
     class Config:
         from_attributes = True
 
