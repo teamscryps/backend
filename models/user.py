@@ -20,8 +20,7 @@ class User(Base):
     otp = Column(String, nullable=True)
     otp_expiry = Column(DateTime, nullable=True)
     broker_refresh_token = Column(String, nullable=True)
+    capital = Column(Integer, nullable=False, default=0)  # New field for user capital
     api_credentials_set = Column(Boolean, default=False)  # Track if API credentials are set
-    
-    # Relationships
     orders = relationship("Order", back_populates="user")
     trades = relationship("Trade", back_populates="user")

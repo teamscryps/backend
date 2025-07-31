@@ -14,6 +14,7 @@ class UserRegistration(UserBase):
 
 class User(UserBase):
     id: int
+    capital: int
     name: str | None
     mobile: str | None
     broker: str | None
