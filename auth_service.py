@@ -90,7 +90,14 @@ async def send_password_email(email: str, password: str):
 
 async def create_user(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
-    db_user = User(email=user.email, password=hashed_password)
+    # Extract name from email and provide default mobile
+    extracted_name = extract_name_from_email(user.email)
+    db_user = User(
+        email=user.email, 
+        password=hashed_password,
+        name=extracted_name,
+        mobile="0000000000"  # Default mobile number
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
