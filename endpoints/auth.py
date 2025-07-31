@@ -2,11 +2,52 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from database import get_db
-from schemas.user import UserCreate, Token, OTPCreate, OTPLogin
-from security import create_access_token, create_refresh_token, verify_password, verify_refresh_token, verify_otp
-from auth_service import create_user, get_user_by_email, update_refresh_token, generate_and_store_otp, verify_user_otp, invalidate_refresh_token
+from schemas.user import UserCreate, Token, OTPCreate, OTPLogin, UserRegistration, FirstTimeAPISetup, ChangePassword, ForgotPassword, ResetPassword, UpdateName
+from security import create_access_token, create_refresh_token, verify_password, verify_refresh_token, verify_otp, get_current_user
+from auth_service import create_user, get_user_by_email, update_refresh_token, generate_and_store_otp, verify_user_otp, invalidate_refresh_token, create_user_with_generated_password, mark_api_credentials_set, change_user_password, reset_user_password, send_password_reset_email
+from cryptography.fernet import Fernet
+from config import settings
+from datetime import datetime, timedelta
+from models.user import User
+
+# Initialize Fernet for encryption
+fernet = Fernet(settings.ENCRYPTION_KEY)
 
 router = APIRouter()
+
+@router.post("/register", response_model=dict)
+async def register(user: UserRegistration, db: Session = Depends(get_db)):
+    """Register a new user with email and mobile - password will be generated and sent via email"""
+    db_user = await get_user_by_email(db, user.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Validate mobile number format (basic validation)
+    if not user.mobile or len(user.mobile) < 10:
+        raise HTTPException(status_code=400, detail="Valid mobile number is required")
+    
+    new_user = await create_user_with_generated_password(db, user)
+    return {"message": "Registration successful. Please check your email for login credentials."}
+
+@router.put("/update-name")
+async def update_name(
+    name_data: UpdateName,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update user's name"""
+    if not name_data.name or len(name_data.name.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Name must be at least 2 characters long")
+    
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user.name = name_data.name.strip()
+    db.commit()
+    db.refresh(user)
+    
+    return {"message": "Name updated successfully", "name": user.name}
 
 @router.post("/signup", response_model=Token)
 async def signup(user: UserCreate, db: Session = Depends(get_db)):
@@ -32,6 +73,146 @@ async def signin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session =
     refresh_token = create_refresh_token(data={"sub": user.email})
     await update_refresh_token(db, user.id, refresh_token)
     return {"access_token": access_token, "token_type": "bearer", "refresh_token": refresh_token}
+
+@router.post("/change-password")
+async def change_password(
+    password_data: ChangePassword,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Change password after verifying old password"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    await change_user_password(db, user.id, password_data.old_password, password_data.new_password)
+    return {"message": "Password changed successfully"}
+
+@router.post("/forgot-password")
+async def forgot_password(forgot_data: ForgotPassword, db: Session = Depends(get_db)):
+    """Send OTP for password reset"""
+    user = await get_user_by_email(db, forgot_data.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Generate and store OTP
+    await generate_and_store_otp(db, user)
+    
+    # Send password reset email
+    await send_password_reset_email(forgot_data.email, user.otp)
+    
+    return {"message": "Password reset OTP sent to your email"}
+
+@router.post("/reset-password")
+async def reset_password(reset_data: ResetPassword, db: Session = Depends(get_db)):
+    """Reset password using OTP verification"""
+    await reset_user_password(db, reset_data.email, reset_data.otp, reset_data.new_password)
+    return {"message": "Password reset successfully"}
+
+@router.post("/first-time-api-setup")
+async def first_time_api_setup(
+    api_setup: FirstTimeAPISetup,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """First-time API credential setup after login"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.api_credentials_set:
+        raise HTTPException(status_code=400, detail="API credentials already set")
+    
+    # Encrypt and store API credentials
+    encrypted_api_key = fernet.encrypt(api_setup.api_key.encode()).decode()
+    encrypted_api_secret = fernet.encrypt(api_setup.api_secret.encode()).decode()
+    
+    # Store additional broker-specific data
+    encrypted_refresh_token = None
+    if api_setup.broker == "zerodha" and api_setup.request_token:
+        encrypted_refresh_token = fernet.encrypt(api_setup.request_token.encode()).decode()
+    elif api_setup.broker == "groww" and api_setup.totp_secret:
+        encrypted_refresh_token = fernet.encrypt(api_setup.totp_secret.encode()).decode()
+    elif api_setup.broker == "upstox" and api_setup.auth_code:
+        encrypted_refresh_token = fernet.encrypt(api_setup.auth_code.encode()).decode()
+    
+    # Update user with encrypted credentials
+    user.api_key = encrypted_api_key
+    user.api_secret = encrypted_api_secret
+    user.broker = api_setup.broker
+    user.broker_refresh_token = encrypted_refresh_token
+    user.api_credentials_set = True
+    user.session_updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(user)
+    
+    return {"message": f"{api_setup.broker} API credentials set successfully"}
+
+@router.post("/update-api-credentials")
+async def update_api_credentials(
+    api_setup: FirstTimeAPISetup,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update existing API credentials"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Encrypt and store API credentials
+    encrypted_api_key = fernet.encrypt(api_setup.api_key.encode()).decode()
+    encrypted_api_secret = fernet.encrypt(api_setup.api_secret.encode()).decode()
+    
+    # Store additional broker-specific data
+    encrypted_refresh_token = None
+    if api_setup.broker == "zerodha" and api_setup.request_token:
+        encrypted_refresh_token = fernet.encrypt(api_setup.request_token.encode()).decode()
+    elif api_setup.broker == "groww" and api_setup.totp_secret:
+        encrypted_refresh_token = fernet.encrypt(api_setup.totp_secret.encode()).decode()
+    elif api_setup.broker == "upstox" and api_setup.auth_code:
+        encrypted_refresh_token = fernet.encrypt(api_setup.auth_code.encode()).decode()
+    
+    # Update user with new encrypted credentials
+    user.api_key = encrypted_api_key
+    user.api_secret = encrypted_api_secret
+    user.broker = api_setup.broker
+    user.broker_refresh_token = encrypted_refresh_token
+    user.api_credentials_set = True
+    user.session_updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(user)
+    
+    return {"message": f"{api_setup.broker} API credentials updated successfully"}
+
+@router.get("/check-api-setup")
+async def check_api_setup(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Check if user has set up API credentials"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {"api_credentials_set": user.api_credentials_set}
+
+@router.get("/api-credentials-info")
+async def get_api_credentials_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get current API credentials information (without exposing actual values)"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not user.api_credentials_set:
+        raise HTTPException(status_code=404, detail="API credentials not set")
+    
+    return {
+        "broker": user.broker,
+        "api_credentials_set": user.api_credentials_set,
+        "session_updated_at": user.session_updated_at,
+        "has_api_key": bool(user.api_key),
+        "has_api_secret": bool(user.api_secret),
+        "has_broker_token": bool(user.broker_refresh_token)
+    }
 
 @router.post("/request-otp")
 async def request_otp(otp_data: OTPCreate, db: Session = Depends(get_db)):
@@ -71,3 +252,19 @@ async def logout(refresh_token: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     await invalidate_refresh_token(db, user.id)
     return {"message": "Logged out successfully"} 
+
+@router.get("/profile")
+async def get_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get current user's profile information"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "mobile": user.mobile,
+        "created_at": user.created_at,
+        "api_credentials_set": user.api_credentials_set
+    } 

@@ -13,15 +13,19 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
     stock_ticker = Column(String, nullable=False)
     buy_price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=False)
     capital_used = Column(Float, nullable=False)
     order_executed_at = Column(DateTime, default=datetime.utcnow)
-    status = Column(String)  # e.g., 'open', 'closed', etc.
-    sell_price = Column(Float)
-    brokerage_charge = Column(Float)  # deduction: brokerage
-    mtf_charge = Column(Float)  # deduction: mtf charge
-    type = Column(ChoiceType(TradeType)) # 'eq' or 'mtf'
+    status = Column(String)  # e.g., 'open', 'closed'
+    sell_price = Column(Float, nullable=True)
+    brokerage_charge = Column(Float, nullable=True)  # deduction: brokerage
+    mtf_charge = Column(Float, nullable=True)  # deduction: mtf charge
+    type = Column(ChoiceType(TradeType), nullable=False)  # 'eq' or 'mtf'
     order_id = Column(Integer, ForeignKey('orders.id'))
+    
+    # Relationships
+    user = relationship("User", back_populates="trades")
     order = relationship("Order", back_populates="trades")
