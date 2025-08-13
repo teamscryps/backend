@@ -29,7 +29,7 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        unused_funds = 2300  # Placeholder for non-brokerage case
+        unused_funds = 0  # Default to 0 instead of placeholder
         allocated_funds = 0
         holdings = []
 
@@ -113,7 +113,7 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
             "allocated_funds": allocated_funds,
             "upcoming_trades": {
                 "count": len(upcoming_trades),
-                "holding_period": "3 Days"  # Placeholder; calculate based on order data
+                "holding_period": "N/A"  # No placeholder - calculate based on actual order data
             }
         }
         

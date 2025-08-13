@@ -5,13 +5,13 @@ from database import get_db
 from schemas.user import UserCreate, Token, OTPCreate, OTPLogin, UserRegistration, FirstTimeAPISetup, ChangePassword, ForgotPassword, ResetPassword, UpdateName
 from security import create_access_token, create_refresh_token, verify_password, verify_refresh_token, verify_otp, get_current_user
 from auth_service import create_user, get_user_by_email, update_refresh_token, generate_and_store_otp, verify_user_otp, invalidate_refresh_token, create_user_with_generated_password, mark_api_credentials_set, change_user_password, reset_user_password, send_password_reset_email
-from cryptography.fernet import Fernet
 from config import settings
 from datetime import datetime, timedelta
 from models.user import User
+from kiteconnect import KiteConnect
+from datetime import timezone, timedelta
 
-# Initialize Fernet for encryption
-fernet = Fernet(settings.ENCRYPTION_KEY)
+# No encryption: store credentials and tokens in plaintext as per user request
 
 router = APIRouter()
 
@@ -123,31 +123,123 @@ async def first_time_api_setup(
     if user.api_credentials_set:
         raise HTTPException(status_code=400, detail="API credentials already set")
     
-    # Encrypt and store API credentials
-    encrypted_api_key = fernet.encrypt(api_setup.api_key.encode()).decode()
-    encrypted_api_secret = fernet.encrypt(api_setup.api_secret.encode()).decode()
+    # Store API credentials in plaintext
+    plain_api_key = api_setup.api_key
+    plain_api_secret = api_setup.api_secret
     
-    # Store additional broker-specific data
-    encrypted_refresh_token = None
+    # For Zerodha: Handle request_token if provided (daily login)
     if api_setup.broker == "zerodha" and api_setup.request_token:
-        encrypted_refresh_token = fernet.encrypt(api_setup.request_token.encode()).decode()
-    elif api_setup.broker == "groww" and api_setup.totp_secret:
-        encrypted_refresh_token = fernet.encrypt(api_setup.totp_secret.encode()).decode()
-    elif api_setup.broker == "upstox" and api_setup.auth_code:
-        encrypted_refresh_token = fernet.encrypt(api_setup.auth_code.encode()).decode()
+        try:
+            # Exchange request_token for access_token
+            kite = KiteConnect(api_key=api_setup.api_key)
+            session_data = kite.generate_session(
+                request_token=api_setup.request_token,
+                api_secret=api_setup.api_secret
+            )
+            
+            # Store access_token as session_id (plaintext)
+            user.session_id = session_data["access_token"]
+            
+            # Store refresh token if available
+            if "refresh_token" in session_data:
+                user.broker_refresh_token = session_data["refresh_token"]
+            
+            # Update session timestamp
+            user.session_updated_at = datetime.utcnow()
+            
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to validate Zerodha credentials: {str(e)}")
     
-    # Update user with encrypted credentials
-    user.api_key = encrypted_api_key
-    user.api_secret = encrypted_api_secret
+    # Update user with plaintext credentials
+    user.api_key = plain_api_key
+    user.api_secret = plain_api_secret
     user.broker = api_setup.broker
-    user.broker_refresh_token = encrypted_refresh_token
     user.api_credentials_set = True
-    user.session_updated_at = datetime.utcnow()
+    
+    # For non-Zerodha brokers, handle other tokens
+    if api_setup.broker != "zerodha":
+        plain_refresh_token = None
+        if api_setup.broker == "groww" and api_setup.totp_secret:
+            plain_refresh_token = api_setup.totp_secret
+        elif api_setup.broker == "upstox" and api_setup.auth_code:
+            plain_refresh_token = api_setup.auth_code
+        
+        user.broker_refresh_token = plain_refresh_token
     
     db.commit()
     db.refresh(user)
     
     return {"message": f"{api_setup.broker} API credentials set successfully"}
+
+@router.post("/zerodha/daily-login")
+async def zerodha_daily_login(
+    request_token: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Daily Zerodha login to get fresh access token"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not user.api_credentials_set or user.broker != "zerodha":
+        raise HTTPException(status_code=400, detail="Zerodha API credentials not set up")
+    
+    try:
+        # Exchange request_token for access_token
+        kite = KiteConnect(api_key=user.api_key)
+        session_data = kite.generate_session(
+            request_token=request_token,
+            api_secret=user.api_secret
+        )
+        
+        # Store new access_token (plaintext)
+        user.session_id = session_data["access_token"]
+        
+        # Store refresh token if available
+        if "refresh_token" in session_data:
+            user.broker_refresh_token = session_data["refresh_token"]
+        
+        # Update session timestamp
+        user.session_updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(user)
+        
+        return {"message": "Zerodha daily login successful", "session_updated_at": user.session_updated_at}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to complete Zerodha daily login: {str(e)}")
+
+@router.get("/zerodha/session-status")
+async def get_zerodha_session_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Check if Zerodha session is valid for today"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not user.api_credentials_set or user.broker != "zerodha":
+        return {"session_valid": False, "reason": "Zerodha not set up"}
+    
+    if not user.session_id:
+        return {"session_valid": False, "reason": "No active session"}
+    
+    # Check if session was updated today (IST)
+    from datetime import datetime, timezone, timedelta
+    ist_tz = timezone(timedelta(hours=5, minutes=30))  # IST timezone
+    today_ist = datetime.now(ist_tz).date()
+    
+    if user.session_updated_at:
+        session_date_ist = user.session_updated_at.replace(tzinfo=timezone.utc).astimezone(ist_tz).date()
+        if session_date_ist == today_ist:
+            return {"session_valid": True, "session_updated_at": user.session_updated_at}
+        else:
+            return {"session_valid": False, "reason": "Session expired (daily login required)"}
+    
+    return {"session_valid": False, "reason": "No session timestamp"}
 
 @router.post("/update-api-credentials")
 async def update_api_credentials(
@@ -160,24 +252,24 @@ async def update_api_credentials(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Encrypt and store API credentials
-    encrypted_api_key = fernet.encrypt(api_setup.api_key.encode()).decode()
-    encrypted_api_secret = fernet.encrypt(api_setup.api_secret.encode()).decode()
+    # Store API credentials in plaintext
+    plain_api_key = api_setup.api_key
+    plain_api_secret = api_setup.api_secret
     
     # Store additional broker-specific data
-    encrypted_refresh_token = None
+    plain_refresh_token = None
     if api_setup.broker == "zerodha" and api_setup.request_token:
-        encrypted_refresh_token = fernet.encrypt(api_setup.request_token.encode()).decode()
+        plain_refresh_token = api_setup.request_token
     elif api_setup.broker == "groww" and api_setup.totp_secret:
-        encrypted_refresh_token = fernet.encrypt(api_setup.totp_secret.encode()).decode()
+        plain_refresh_token = api_setup.totp_secret
     elif api_setup.broker == "upstox" and api_setup.auth_code:
-        encrypted_refresh_token = fernet.encrypt(api_setup.auth_code.encode()).decode()
+        plain_refresh_token = api_setup.auth_code
     
     # Update user with new encrypted credentials
-    user.api_key = encrypted_api_key
-    user.api_secret = encrypted_api_secret
+    user.api_key = plain_api_key
+    user.api_secret = plain_api_secret
     user.broker = api_setup.broker
-    user.broker_refresh_token = encrypted_refresh_token
+    user.broker_refresh_token = plain_refresh_token
     user.api_credentials_set = True
     user.session_updated_at = datetime.utcnow()
     
@@ -266,5 +358,7 @@ async def get_profile(current_user: User = Depends(get_current_user), db: Sessio
         "name": user.name,
         "mobile": user.mobile,
         "created_at": user.created_at,
-        "api_credentials_set": user.api_credentials_set
+        "api_credentials_set": user.api_credentials_set,
+        "broker": user.broker,
+        
     } 

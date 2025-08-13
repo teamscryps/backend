@@ -10,7 +10,6 @@ from models.user import User as UserModel
 from security import get_current_user
 from datetime import datetime
 import httpx
-from cryptography.fernet import Fernet
 from config import settings
 from fastapi_limiter.depends import RateLimiter
 from endpoints.logs import log_action, log_error, log_request
@@ -19,8 +18,7 @@ import pyotp
 import upstox_client
 from upstox_client.rest import ApiException
 
-# Initialize Fernet for encryption
-fernet = Fernet(settings.ENCRYPTION_KEY)
+# No encryption: credentials and tokens stored in plaintext
 
 router = APIRouter()
 
@@ -34,9 +32,9 @@ async def refresh_zerodha_session(user: UserModel, db: Session, request: Request
         log_error("missing_refresh_token", Exception("No refresh token available"), user, correlation_id, {"broker": "zerodha"})
         raise HTTPException(status_code=400, detail="No refresh token available")
 
-    decrypted_refresh_token = fernet.decrypt(user.broker_refresh_token.encode()).decode()
-    decrypted_api_key = fernet.decrypt(user.api_key.encode()).decode()
-    decrypted_api_secret = fernet.decrypt(user.api_secret.encode()).decode()
+    decrypted_refresh_token = user.broker_refresh_token
+    decrypted_api_key = user.api_key
+    decrypted_api_secret = user.api_secret
 
     async with httpx.AsyncClient() as client:
         try:
@@ -58,7 +56,7 @@ async def refresh_zerodha_session(user: UserModel, db: Session, request: Request
                 log_error("no_access_token", Exception("No access token received"), user, correlation_id, {"broker": "zerodha"})
                 raise HTTPException(status_code=400, detail="No access token received from Zerodha")
 
-            user.session_id = fernet.encrypt(new_access_token.encode()).decode()
+            user.session_id = new_access_token
             user.session_updated_at = datetime.utcnow()
             db.commit()
             db.refresh(user)
@@ -73,12 +71,12 @@ async def get_groww_access_token(user: UserModel, db: Session, correlation_id: s
     Retrieve or refresh Groww access token.
     """
     log_action("get_groww_access_token_start", user, correlation_id, {"broker": "groww"})
-    dec_api_key = fernet.decrypt(user.api_key.encode()).decode()
-    dec_secret = fernet.decrypt(user.api_secret.encode()).decode()
-    dec_totp_secret = fernet.decrypt(user.broker_refresh_token.encode()).decode() if user.broker_refresh_token else None
+    dec_api_key = user.api_key
+    dec_secret = user.api_secret
+    dec_totp_secret = user.broker_refresh_token if user.broker_refresh_token else None
 
     if user.session_id:
-        token = fernet.decrypt(user.session_id.encode()).decode()
+        token = user.session_id
         log_action("groww_session_reused", user, correlation_id, {"broker": "groww"})
         return token
 
@@ -88,7 +86,7 @@ async def get_groww_access_token(user: UserModel, db: Session, correlation_id: s
             raise HTTPException(status_code=400, detail="No TOTP secret available")
         totp = pyotp.TOTP(dec_totp_secret).now()
         access_token = GrowwAPI.get_access_token(dec_api_key, totp)
-        user.session_id = fernet.encrypt(access_token.encode()).decode()
+        user.session_id = access_token
         user.session_updated_at = datetime.utcnow()
         db.commit()
         db.refresh(user)
@@ -104,7 +102,7 @@ async def get_upstox_access_token(user: UserModel, db: Session, correlation_id: 
     """
     log_action("get_upstox_access_token_start", user, correlation_id, {"broker": "upstox"})
     if user.session_id and not auth_code:
-        token = fernet.decrypt(user.session_id.encode()).decode()
+        token = user.session_id
         log_action("upstox_session_reused", user, correlation_id, {"broker": "upstox"})
         return token
 
@@ -117,7 +115,7 @@ async def get_upstox_access_token(user: UserModel, db: Session, correlation_id: 
         session.client_secret = settings.UPSTOX_API_SECRET
         session.redirect_uri = settings.UPSTOX_REDIRECT_URL
         access_token = session.retrieve_access_token(auth_code)
-        user.session_id = fernet.encrypt(access_token.encode()).decode()
+        user.session_id = access_token
         user.session_updated_at = datetime.utcnow()
         db.commit()
         db.refresh(user)
@@ -157,7 +155,7 @@ async def create_trade(
                 try:
                     response = await client.post(
                         "https://api.kite.trade/orders/regular",
-                        headers={"Authorization": f"token {fernet.decrypt(user.session_id.encode()).decode()}"},
+                        headers={"Authorization": f"token {user.session_id}"},
                         data={
                             "tradingsymbol": trade.stock_ticker,
                             "exchange": "NSE",
@@ -213,9 +211,8 @@ async def create_trade(
 
         elif user.broker == "upstox":
             try:
-                dec_token = fernet.decrypt(user.session_id.encode()).decode()
                 config = upstox_client.Configuration()
-                config.access_token = dec_token
+                config.access_token = user.session_id
                 config.api_key = settings.UPSTOX_API_KEY
                 api = upstox_client.OrderApi(upstox_client.ApiClient(config))
                 response = api.place_order(
@@ -323,7 +320,7 @@ async def update_trade(
                     try:
                         response = await client.post(
                             "https://api.kite.trade/orders/regular",
-                            headers={"Authorization": f"token {fernet.decrypt(user.session_id.encode()).decode()}"},
+                            headers={"Authorization": f"token {user.session_id}"},
                             data={
                                 "tradingsymbol": trade_update.stock_ticker,
                                 "exchange": "NSE",
@@ -379,9 +376,8 @@ async def update_trade(
 
             elif user.broker == "upstox":
                 try:
-                    dec_token = fernet.decrypt(user.session_id.encode()).decode()
                     config = upstox_client.Configuration()
-                    config.access_token = dec_token
+                    config.access_token = user.session_id
                     config.api_key = settings.UPSTOX_API_KEY
                     api = upstox_client.OrderApi(upstox_client.ApiClient(config))
                     response = api.place_order(
