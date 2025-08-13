@@ -43,4 +43,5 @@ pytest==8.4.1
 
 # Brokerage APIs
 pyotp==2.9.0
+kiteconnect==5.0.1
 # upstox-client would be added here when available

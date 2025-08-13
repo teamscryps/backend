@@ -62,7 +62,7 @@ def get_trader_dashboard(db: Session = Depends(get_db)):
             "stock": t.stock_ticker,
             "quantity": t.quantity,
             "buy_price": t.buy_price,
-            "current_price": t.sell_price or t.buy_price,  # fallback if not sold
+            "current_price": t.sell_price if t.sell_price else 0,  # No fallback - use 0 if not sold
             "pnl": (t.sell_price * t.quantity - t.capital_used - (t.brokerage_charge or 0) - (t.mtf_charge or 0)) if t.sell_price else 0,
             "pnl_pct": ((t.sell_price - t.buy_price) / t.buy_price * 100) if t.sell_price else 0,
             "mtf": t.type.value if hasattr(t.type, 'value') else str(t.type)
@@ -70,7 +70,7 @@ def get_trader_dashboard(db: Session = Depends(get_db)):
         for t in active_trades
     ]
 
-    # Watchlist: Placeholder (implement if you have a model/table)
+    # Watchlist: Empty list (no placeholder data)
     watchlist = []
 
     dashboard_data = {

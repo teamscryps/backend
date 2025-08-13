@@ -44,6 +44,9 @@ class FirstTimeAPISetup(BaseModel):
     totp_secret: str | None = None  # For Groww
     auth_code: str | None = None  # For Upstox
 
+class ZerodhaDailyLogin(BaseModel):
+    request_token: str
+
 class ChangePassword(BaseModel):
     old_password: str
     new_password: str

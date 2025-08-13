@@ -19,6 +19,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# remove pycache from previous inside directories
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
 # C extensions
 *.so
 

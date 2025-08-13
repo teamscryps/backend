@@ -4,10 +4,12 @@ from endpoints.dashboard import router as dashboard_router
 from execution_engine.endpoint import router as execution_router
 from endpoints.trade import router as trade_router
 from endpoints.notifications import router as notifications_router
+from endpoints.accounts import router as accounts_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(execution_router, prefix="/execution", tags=["execution"]) 
 api_router.include_router(trade_router, prefix="/trade", tags=["trade"]) 
-api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"]) 
+api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(accounts_router, prefix="/accounts", tags=["accounts"]) 
