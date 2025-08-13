@@ -2,7 +2,6 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
-from sqlalchemy_utils import ChoiceType
 from enum import Enum
 
 class TradeType(Enum):
@@ -23,7 +22,7 @@ class Trade(Base):
     sell_price = Column(Float, nullable=True)
     brokerage_charge = Column(Float, nullable=True)  # deduction: brokerage
     mtf_charge = Column(Float, nullable=True)  # deduction: mtf charge
-    type = Column(ChoiceType(TradeType), nullable=False)  # 'eq' or 'mtf'
+    type = Column(String, nullable=False)  # 'eq' or 'mtf'
     order_id = Column(Integer, ForeignKey('orders.id'))
     
     # Relationships

@@ -186,3 +186,11 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# Application logs
+logs/
+*.log
+
+# macOS system files
+.DS_Store
+**/.DS_Store
