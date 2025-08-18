@@ -222,13 +222,22 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                         kite = KiteConnect(api_key=user.api_key)
                         kite.set_access_token(user.session_id)
                         
+
                         # Get holdings (KiteConnect returns a list)
                         holdings_data = kite.holdings()
-                        holdings = holdings_data if isinstance(holdings_data, list) else holdings_data.get("data", [])
+                        holdings = []
+                        for h in holdings_data if isinstance(holdings_data, list) else holdings_data.get("data", []):
+                            holding = {
+                                "stock_symbol": h.get("tradingsymbol"),
+                                "quantity": h.get("quantity", 0),
+                                "average_price": h.get("average_price", 0),
+                                "last_price": h.get("last_price", 0),
+                                "pnl": h.get("pnl", 0)
+                            }
+                            holdings.append(holding)
 
                         # Get margins (KiteConnect returns a dict with segments like 'equity')
                         margins_data = kite.margins()
-                        # Support both direct and nested 'data' keys just in case
                         equity_margins = (
                             margins_data.get("equity", {})
                             if isinstance(margins_data, dict)
@@ -237,8 +246,58 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                         if not equity_margins and isinstance(margins_data, dict):
                             equity_margins = margins_data.get("data", {}).get("equity", {})
 
-                        unused_funds = equity_margins.get("available", {}).get("cash", 0)
-                        allocated_funds = equity_margins.get("utilised", {}).get("debits", 0)
+                        # Available Funds: kite.margins()["equity"]["available"]["cash"]
+                        available_funds = equity_margins.get("available", {}).get("cash", 0)
+
+                        # Ongoing Trades: kite.positions(), open positions and intraday P&L
+                        positions_data = kite.positions()
+                        ongoing_trades = []
+                        for pos in positions_data.get("day", []):
+                            ongoing_trades.append({
+                                "stock_symbol": pos.get("tradingsymbol"),
+                                "quantity": pos.get("quantity", 0),
+                                "buy_price": pos.get("buy_price", 0),
+                                "sell_price": pos.get("sell_price", 0),
+                                "pnl": pos.get("pnl", 0),
+                                "type": pos.get("product", "")
+                            })
+
+                        # Recent Trades: kite.trades(), history of executed trades
+                        trades_data = kite.trades()
+                        recent_trades = []
+                        for t in trades_data:
+                            recent_trades.append({
+                                "trade_id": t.get("trade_id"),
+                                "stock_symbol": t.get("tradingsymbol"),
+                                "quantity": t.get("quantity", 0),
+                                "price": t.get("price", 0),
+                                "transaction_type": t.get("transaction_type", ""),
+                                "order_id": t.get("order_id"),
+                                "exchange": t.get("exchange", ""),
+                                "trade_time": t.get("trade_time", "")
+                            })
+
+                        # Allocated Funds: Σ (quantity × average_price)
+                        allocated_funds = sum([
+                            h["quantity"] * h["average_price"]
+                            for h in holdings
+                        ])
+                        # Invested Funds: Σ (quantity × buy_price)
+                        invested_funds = sum([
+                            h["quantity"] * h.get("buy_price", h["average_price"])
+                            for h in holdings
+                        ])
+                        # Unused Funds: Allocated Funds – Invested Funds
+                        unused_funds = allocated_funds - invested_funds
+                        # Market Value: Σ (quantity × last_price)
+                        market_value = sum([
+                            h["quantity"] * h["last_price"]
+                            for h in holdings
+                        ])
+                        # Overall Profit %: ((Market Value – Invested Funds) / Invested Funds) × 100
+                        overall_profit_pct = ((market_value - invested_funds) / invested_funds * 100) if invested_funds else 0
+                        # Portfolio Total Value: Available Funds + Market Value
+                        portfolio_total_value = available_funds + market_value
                         
                         log_action("zerodha_portfolio_fetched", user, correlation_id, {"broker": "zerodha"})
                         
@@ -281,52 +340,12 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                 log_error("upstox_portfolio_fetch_failed", e, user, correlation_id, {"broker": "upstox"})
                 raise HTTPException(status_code=503, detail=f"Upstox service unavailable: {str(e)}")
 
-        # Fetch ongoing trades
-        ongoing_trades = db.query(Trade).options(
-            selectinload(Trade.order)
-        ).filter(
-            Trade.status == 'open',
-            Trade.order_executed_at >= datetime.utcnow() - timedelta(days=30)
-        ).all()
 
-        # Fetch recent trades
-        recent_trades = db.query(Trade).options(
-            selectinload(Trade.order)
-        ).filter(
-            Trade.order_executed_at >= datetime.utcnow() - timedelta(days=30)
-        ).order_by(Trade.order_executed_at.desc()).limit(10).all()
-
-        # Fetch upcoming trades
+        # Upcoming trades can still be fetched from DB if needed
         upcoming_trades = db.query(Order).filter(
             Order.user_id == user.id,
             Order.order_type == "buy"
         ).all()
-
-        # Convert trades to dictionaries
-        ongoing_trades_data = []
-        for trade in ongoing_trades:
-            ongoing_trades_data.append({
-                "id": trade.id,
-                "stock_symbol": trade.stock_ticker,
-                "quantity": trade.quantity,
-                "buy_price": trade.buy_price,
-                "sell_price": trade.sell_price,
-                "status": trade.status,
-                "order_executed_at": trade.order_executed_at.isoformat() if trade.order_executed_at else None
-            })
-
-        recent_trades_data = []
-        for trade in recent_trades:
-            recent_trades_data.append({
-                "id": trade.id,
-                "stock_symbol": trade.stock_ticker,
-                "quantity": trade.quantity,
-                "buy_price": trade.buy_price,
-                "sell_price": trade.sell_price,
-                "status": trade.status,
-                "order_executed_at": trade.order_executed_at.isoformat() if trade.order_executed_at else None
-            })
-
         upcoming_trades_data = []
         for trade in upcoming_trades:
             upcoming_trades_data.append({
@@ -339,13 +358,19 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                 "order_executed_at": trade.order_executed_at.isoformat() if trade.order_executed_at else None
             })
 
+
         # Return dashboard data with session status
         dashboard_data = {
-            "unused_funds": unused_funds,
-            "allocated_funds": allocated_funds,
+            "available_funds": available_funds,
             "holdings": holdings,
-            "ongoing_trades": ongoing_trades_data,
-            "recent_trades": recent_trades_data,
+            "ongoing_trades": ongoing_trades,
+            "recent_trades": recent_trades,
+            "allocated_funds": allocated_funds,
+            "invested_funds": invested_funds,
+            "unused_funds": unused_funds,
+            "market_value": market_value,
+            "overall_profit_pct": overall_profit_pct,
+            "portfolio_total_value": portfolio_total_value,
             "upcoming_trades": upcoming_trades_data,
             "broker": user.broker,
             "session_status": session_status

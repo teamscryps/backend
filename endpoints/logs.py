@@ -13,33 +13,25 @@ import traceback
 from audit_service import log_action_to_db, log_request_to_db, log_error_to_db
 
 class Logger:
-    def __init__(self, log_file: str = "logs/app.log", max_log_days: int = 7):
+    def __init__(self, max_log_days: int = 7):
         """
-        Initialize the logger with file rotation, JSON formatting, and dynamic log level.
+        Initialize the logger to create daily log files named with today's date (YYYY-MM-DD).
         """
-        # Ensure log directory exists
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        log_file = f"logs/app.log.{today_str}"
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-        # Configure logger
         self.logger = logging.getLogger("DashboardLogger")
         self.logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
-
-        # Remove existing handlers to avoid duplication
         self.logger.handlers.clear()
 
-        # File handler with daily rotation
-        file_handler = logging.handlers.TimedRotatingFileHandler(
+        file_handler = logging.FileHandler(
             filename=log_file,
-            when="midnight",
-            interval=1,
-            backupCount=max_log_days,
             encoding="utf-8"
         )
 
-        # Stream handler for stdout
         stream_handler = logging.StreamHandler()
 
-        # JSON formatter
         formatter = logging.Formatter(
             json.dumps({
                 "timestamp": "%(asctime)s",
@@ -54,7 +46,6 @@ class Logger:
         file_handler.setFormatter(formatter)
         stream_handler.setFormatter(formatter)
 
-        # Add handlers
         self.logger.addHandler(file_handler)
         self.logger.addHandler(stream_handler)
 
@@ -201,3 +192,4 @@ async def log_request(request: Request, action: str, user: Optional[User] = None
 
 def log_error(action: str, error: Exception, user: Optional[User] = None, correlation_id: str = "", context: Optional[Dict[str, Any]] = None):
     logger_instance.log_error(action, error, user, correlation_id, context)
+
