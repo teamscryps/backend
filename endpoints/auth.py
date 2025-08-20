@@ -120,8 +120,11 @@ async def first_time_api_setup(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    if user.api_credentials_set:
-        raise HTTPException(status_code=400, detail="API credentials already set")
+    # Always overwrite existing API credentials if present
+    user.api_key = api_setup.api_key
+    user.api_secret = api_setup.api_secret
+    user.broker = api_setup.broker
+    user.api_credentials_set = True
     
     # Store API credentials in plaintext
     plain_api_key = api_setup.api_key

@@ -1,0 +1,5 @@
+source env/bin/activate && python -c "from database import SessionLocal; from models.user import User; db = SessionLocal(); users = db.query(User).all(); print([u.email for u in users])"
+
+source env/bin/activate && python -c "from database import SessionLocal; from models.user import User; db = SessionLocal(); user = db.query(User).filter(User.email == 'riteshnvisonex@gmail.com').first(); print({'api_key': user.api_key, 'api_secret': user.api_secret, 'broker': user.broker, 'api_credentials_set': user.api_credentials_set} if user else 'User not found')"
+
+source env/bin/activate && python -c "from database import SessionLocal; from models.user import User; db = SessionLocal(); user = db.query(User).filter(User.email == 'riteshnvisonex@gmail.com').first(); print({'access_token': user.session_id, 'refresh_token': user.broker_refresh_token} if user else 'User not found')"

@@ -281,20 +281,32 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                 log_error("upstox_portfolio_fetch_failed", e, user, correlation_id, {"broker": "upstox"})
                 raise HTTPException(status_code=503, detail=f"Upstox service unavailable: {str(e)}")
 
-        # Fetch ongoing trades
-        ongoing_trades = db.query(Trade).options(
-            selectinload(Trade.order)
-        ).filter(
-            Trade.status == 'open',
-            Trade.order_executed_at >= datetime.utcnow() - timedelta(days=30)
-        ).all()
-
-        # Fetch recent trades
-        recent_trades = db.query(Trade).options(
-            selectinload(Trade.order)
-        ).filter(
-            Trade.order_executed_at >= datetime.utcnow() - timedelta(days=30)
-        ).order_by(Trade.order_executed_at.desc()).limit(10).all()
+        # Combine Zerodha API trades if available, else fallback to empty values for all dashboard metrics
+        if user.broker == "zerodha" and session_status["valid"]:
+            # Fetch ongoing trades from Zerodha
+            try:
+                positions_data = kite.positions()
+                ongoing_trades = positions_data.get("day", []) if isinstance(positions_data, dict) else []
+            except Exception as e:
+                log_error("zerodha_positions_error", e, user, correlation_id, {"broker": "zerodha"})
+                ongoing_trades = []
+            # Fetch recent trades from Zerodha
+            try:
+                recent_trades = kite.trades()
+            except Exception as e:
+                log_error("zerodha_trades_error", e, user, correlation_id, {"broker": "zerodha"})
+                recent_trades = []
+        else:
+            holdings = []
+            unused_funds = 0
+            allocated_funds = 0
+            invested_funds = 0.0
+            market_value = 0.0
+            unused_funds_calc = 0.0
+            overall_profit_pct = 0.0
+            portfolio_overview = 0.0
+            ongoing_trades = []
+            recent_trades = []
 
         # Fetch upcoming trades
         upcoming_trades = db.query(Order).filter(
@@ -327,6 +339,13 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                 "order_executed_at": trade.order_executed_at.isoformat() if trade.order_executed_at else None
             })
 
+        # Always initialize portfolio metrics to 0.0 to avoid UnboundLocalError
+        invested_funds = 0.0
+        allocated_funds_calc = 0.0
+        market_value = 0.0
+        unused_funds_calc = 0.0
+        overall_profit_pct = 0.0
+        portfolio_overview = 0.0
         upcoming_trades_data = []
         for trade in upcoming_trades:
             upcoming_trades_data.append({
@@ -339,10 +358,28 @@ async def get_dashboard_data(current_user: User = Depends(get_current_user), db:
                 "order_executed_at": trade.order_executed_at.isoformat() if trade.order_executed_at else None
             })
 
+        # Portfolio Metrics Calculation
+        if holdings:
+            for h in holdings:
+                qty = h.get("quantity") or h.get("qty") or 0
+                avg_price = h.get("average_price") or h.get("avg_price") or 0
+                ltp = h.get("last_price") or h.get("ltp") or 0
+                invested_funds += qty * avg_price
+                allocated_funds_calc += qty * avg_price
+                market_value += qty * ltp
+            # If API allocated_funds is 0, use calculated value
+            if not allocated_funds:
+                allocated_funds = allocated_funds_calc
+            unused_funds_calc = allocated_funds - invested_funds
+            overall_profit_pct = ((market_value - invested_funds) / invested_funds * 100) if invested_funds else 0.0
+            portfolio_overview = unused_funds + market_value
+
         # Return dashboard data with session status
         dashboard_data = {
             "unused_funds": unused_funds,
             "allocated_funds": allocated_funds,
+            "invested_funds": invested_funds,
+            "portfolio_overview": portfolio_overview,
             "holdings": holdings,
             "ongoing_trades": ongoing_trades_data,
             "recent_trades": recent_trades_data,
@@ -582,6 +619,7 @@ async def place_buy_order(
                     is_amo=False
                 )
                 if not response or not hasattr(response, 'order_id'):
+                        
                     log_error("upstox_order_failed", Exception("Order placement failed"), user, correlation_id, {"broker": "upstox", "stock_ticker": order.stock_ticker})
                     raise HTTPException(status_code=400, detail="Failed to place Upstox buy order")
             except ApiException as e:
