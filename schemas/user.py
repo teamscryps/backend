@@ -59,5 +59,7 @@ class ResetPassword(BaseModel):
     otp: str
     new_password: str
 
+
 class UpdateName(BaseModel):
     name: str
+    mobile: str | None = None
