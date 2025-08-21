@@ -35,19 +35,25 @@ async def update_name(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update user's name"""
+    """Update user's name and mobile number"""
     if not name_data.name or len(name_data.name.strip()) < 2:
         raise HTTPException(status_code=400, detail="Name must be at least 2 characters long")
-    
+
+    if name_data.mobile is not None:
+        if len(name_data.mobile) < 10:
+            raise HTTPException(status_code=400, detail="Valid mobile number is required")
+
     user = await get_user_by_email(db, current_user.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     user.name = name_data.name.strip()
+    if name_data.mobile is not None:
+        user.mobile = name_data.mobile
     db.commit()
     db.refresh(user)
-    
-    return {"message": "Name updated successfully", "name": user.name}
+
+    return {"message": "Name and mobile updated successfully", "name": user.name, "mobile": user.mobile}
 
 @router.post("/signup", response_model=Token)
 async def signup(user: UserCreate, db: Session = Depends(get_db)):

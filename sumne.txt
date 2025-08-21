@@ -2,4 +2,14 @@ source env/bin/activate && python -c "from database import SessionLocal; from mo
 
 source env/bin/activate && python -c "from database import SessionLocal; from models.user import User; db = SessionLocal(); user = db.query(User).filter(User.email == 'riteshnvisonex@gmail.com').first(); print({'api_key': user.api_key, 'api_secret': user.api_secret, 'broker': user.broker, 'api_credentials_set': user.api_credentials_set} if user else 'User not found')"
 
+
+
 source env/bin/activate && python -c "from database import SessionLocal; from models.user import User; db = SessionLocal(); user = db.query(User).filter(User.email == 'riteshnvisonex@gmail.com').first(); print({'access_token': user.session_id, 'refresh_token': user.broker_refresh_token} if user else 'User not found')"
+
+
+
+Consolidate API Calls: The GET /dashboard/dashboard endpoint should ideally provide all the necessary data for the initial dashboard view. This includes the data currently fetched by:
+
+checkAPISetup() checkZerodhaSessionStatus() I will modify the backend to include this information in the /dashboard/dashboard response. This will reduce the number of initial API calls from 3 to 1.
+
+On-Demand Loading: The getZerodhaLoginURL and completeZerodhaDailyLogin calls are only needed when the user explicitly clicks the "Activate" button. I will move these calls to the handleActivateClick function to avoid making them on initial page load.
