@@ -10,10 +10,42 @@ from datetime import datetime, timedelta
 from models.user import User
 from kiteconnect import KiteConnect
 from datetime import timezone, timedelta
-
-# No encryption: store credentials and tokens in plaintext as per user request
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from database import get_db
+from schemas.user import UserCreate, Token, OTPCreate, OTPLogin, UserRegistration, FirstTimeAPISetup, ChangePassword, ForgotPassword, ResetPassword, UpdateName
+from security import create_access_token, create_refresh_token, verify_password, verify_refresh_token, verify_otp, get_current_user
+from auth_service import create_user, get_user_by_email, update_refresh_token, generate_and_store_otp, verify_user_otp, invalidate_refresh_token, create_user_with_generated_password, mark_api_credentials_set, change_user_password, reset_user_password, send_password_reset_email
+from config import settings
+from datetime import datetime, timedelta
+from models.user import User
+from kiteconnect import KiteConnect
 
 router = APIRouter()
+
+@router.delete("/api-credentials")
+async def delete_api_credentials(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete user's API credentials"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.api_key = None
+    user.api_secret = None
+    user.broker = None
+    user.broker_refresh_token = None
+    user.session_id = None
+    user.api_credentials_set = False
+    user.session_updated_at = None
+
+    db.commit()
+    db.refresh(user)
+
+    return {"message": "API credentials deleted successfully"}
 
 @router.post("/register", response_model=dict)
 async def register(user: UserRegistration, db: Session = Depends(get_db)):
