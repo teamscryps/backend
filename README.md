@@ -95,14 +95,60 @@ source env/bin/activate  # On Windows: env\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Database Configuration
-```bash
-# Update database connection in config.py
-DATABASE_URL = "postgresql://postgres:1234@localhost:5432/scryps_db"
+### 2. Database Setup and Migrations
 
-# Run database migrations
+This project uses PostgreSQL as the database and Alembic for handling database migrations.
+
+**1. Install PostgreSQL:**
+
+If you don't have PostgreSQL installed, you can download it from the official website: [https://www.postgresql.org/download/](https://www.postgresql.org/download/)
+
+**2. Create the Database and User:**
+
+After installing PostgreSQL, you need to create a database and a user for the application.
+
+```sql
+-- Connect to the default 'postgres' database
+psql -U postgres
+
+-- Create a new user with a password
+CREATE USER myuser WITH PASSWORD 'mypassword';
+
+-- Create a new database and set the owner
+CREATE DATABASE scryps_db OWNER myuser;
+```
+
+**3. Configure the Database URL:**
+
+The application uses a `DATABASE_URL` to connect to the database. You need to set this in two places:
+
+*   **`config.py`:** For the main application.
+*   **`alembic.ini`:** For database migrations.
+
+The format of the `DATABASE_URL` is:
+`postgresql://<user>:<password>@<host>:<port>/<database_name>`
+
+Update the `sqlalchemy.url` in `alembic.ini` and `DATABASE_URL` in `config.py` with your database credentials:
+
+**`alembic.ini`:**
+```ini
+sqlalchemy.url = postgresql://myuser:mypassword@localhost:5432/scryps_db
+```
+
+**`config.py`:**
+```python
+DATABASE_URL: str = "postgresql://myuser:mypassword@localhost:5432/scryps_db"
+```
+
+**4. Run Database Migrations:**
+
+Alembic is used to manage database schema changes. To apply all migrations and bring the database up to date with the latest schema, run the following command:
+
+```bash
 alembic upgrade head
 ```
+
+This will create all the necessary tables in the `scryps_db` database.
 
 ### 3. Environment Variables
 Create a `.env` file in the project root:
