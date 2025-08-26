@@ -4,7 +4,10 @@ from models.order import Order
 from database import SessionLocal
 import httpx
 from kiteconnect import KiteConnect
-from growwapi import GrowwAPI
+try:
+    from growwapi import GrowwAPI  # type: ignore
+except ImportError:  # allow tests without growwapi
+    GrowwAPI = None  # type: ignore
 import upstox_client
 from upstox_client.rest import ApiException
 
@@ -50,7 +53,7 @@ def execute_bulk_trade(broker_type, stock_symbol, percent_quantity, user_ids):
                     buy_price = 0
                     quantity = 0
                     
-            elif broker_type == 'groww' and user.session_id:
+            elif broker_type == 'groww' and user.session_id and GrowwAPI is not None:
                 try:
                     groww = GrowwAPI(user.session_id)
                     # Get current price and place order

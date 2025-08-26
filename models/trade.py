@@ -12,7 +12,9 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'))
+    user_id = Column(Integer, ForeignKey('users.id'), index=True)
+    # Optional reference to the trader who executed on behalf of the user (client)
+    trader_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
     stock_ticker = Column(String, nullable=False)
     buy_price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -26,5 +28,6 @@ class Trade(Base):
     order_id = Column(Integer, ForeignKey('orders.id'))
     
     # Relationships
-    user = relationship("User", back_populates="trades")
+    user = relationship("User", back_populates="trades", foreign_keys=[user_id])
     order = relationship("Order", back_populates="trades")
+    trader = relationship("User", back_populates="executed_trades", foreign_keys=[trader_id])

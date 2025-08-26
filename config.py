@@ -1,5 +1,5 @@
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from cryptography.fernet import Fernet
 
 class Settings(BaseSettings):
@@ -34,9 +34,21 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = Fernet.generate_key().decode()
 
     LOG_LEVEL: str = "INFO"
+    # Primary broker webhook secret: MUST be set via environment in non-debug environments.
+    BROKER_WEBHOOK_SECRET: str | None = None
+    # Comma-separated list of previous secrets still accepted for signature verification (facilitates rotation)
+    BROKER_WEBHOOK_ADDITIONAL_SECRETS: str | None = None
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-settings = Settings() 
+    def _post_init(self):
+        # Enforce secret presence in non-debug contexts
+        if not self.DEBUG:
+            if not self.BROKER_WEBHOOK_SECRET:
+                raise ValueError("BROKER_WEBHOOK_SECRET must be set in environment for non-debug mode")
+        # Warn (raise) if an obviously default placeholder is used outside debug
+        if (self.BROKER_WEBHOOK_SECRET and self.BROKER_WEBHOOK_SECRET.lower() in {"change-me", "changeme", "default", "secret"}) and not self.DEBUG:
+            raise ValueError("Insecure BROKER_WEBHOOK_SECRET value detected; change it")
+
+settings = Settings()
+settings._post_init()

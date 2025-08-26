@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import datetime
 
 class UserBase(BaseModel):
@@ -15,14 +15,16 @@ class UserRegistration(UserBase):
 class User(UserBase):
     id: int
     capital: int
+    cash_available: float | None = None
+    cash_blocked: float | None = None
     name: str | None
     mobile: str | None
     broker: str | None
+    role: str | None = None
     created_at: datetime | None
     session_updated_at: datetime | None
     api_credentials_set: bool | None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class Token(BaseModel):
     access_token: str

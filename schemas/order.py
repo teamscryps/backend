@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Literal
 from datetime import datetime
 
@@ -18,5 +18,4 @@ class OrderOut(OrderBase):
     mtf_enabled: bool
     order_executed_at: datetime | None
 
-    class Config:
-        from_attributes = True 
+    model_config = ConfigDict(from_attributes=True)

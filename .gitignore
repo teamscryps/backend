@@ -194,3 +194,59 @@ logs/
 # macOS system files
 .DS_Store
 **/.DS_Store
+
+# ---- Project specific additions ----
+# Frontend build & dependencies
+trader-dashboard/node_modules/
+trader-dashboard/.next/
+trader-dashboard/.turbo/
+trader-dashboard/build/
+trader-dashboard/dist/
+
+# Generic Node / JS artifacts
+node_modules/
+*.tsbuildinfo
+
+# Editor / IDE configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Alembic caches
+alembic/versions/__pycache__/
+
+# Local databases & dumps
+*.sqlite
+*.sqlite3
+*.db-journal
+*.dump
+*.sql
+*.bak
+
+# Temporary & scratch
+tmp/
+temp/
+scratch/
+*.tmp
+*.temp
+
+# Coverage & test artifacts (extras)
+coverage-html/
+.coverage.local
+
+# Python version file
+.python-version
+
+# Additional env variants
+.env.local
+.env.development
+.env.production
+
+# Rotated logs
+*.log.*
+
+# macOS extended attributes
+._*
+
+# ---- End project specific additions ----

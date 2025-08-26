@@ -5,7 +5,7 @@ from database import get_db
 from security import get_current_user
 from models.user import User as UserModel
 from datetime import datetime, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from enum import Enum
 import uuid
 
@@ -46,8 +46,7 @@ class NotificationOut(NotificationBase):
     created_at: datetime
     read_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class NotificationUpdate(BaseModel):
     is_read: bool
