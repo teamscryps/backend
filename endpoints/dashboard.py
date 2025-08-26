@@ -13,14 +13,20 @@ from security import get_current_user
 from datetime import datetime, timedelta, timezone
 import httpx
 from config import settings
-from pydantic import BaseModel, HttpUrl, validator
+from pydantic import BaseModel, HttpUrl, field_validator
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
 import redis.asyncio as redis
 import json
 from endpoints.logs import log_action, log_error, log_request
-from growwapi import GrowwAPI
-import pyotp
+try:
+    from growwapi import GrowwAPI  # type: ignore
+except ImportError:
+    GrowwAPI = None  # type: ignore
+try:
+    import pyotp  # type: ignore
+except ImportError:
+    pyotp = None  # type: ignore
 import upstox_client
 from upstox_client.rest import ApiException
 from kiteconnect import KiteConnect
@@ -53,7 +59,7 @@ class BrokerageActivation(BaseModel):
     totp_secret: str | None = None  # For Groww
     auth_code: str | None = None  # For Upstox OAuth
 
-    @validator("brokerage")
+    @field_validator("brokerage")
     def validate_brokerage(cls, v):
         valid_brokerages = ["zerodha", "groww", "upstox"]
         if v.lower() not in valid_brokerages:

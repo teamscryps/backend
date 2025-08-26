@@ -386,6 +386,30 @@ All authentication endpoints return tokens in this format:
 - **Encrypted credentials**: API keys and secrets encrypted with Fernet
 - **Session management**: Secure session token storage
 - **Multi-brokerage support**: Zerodha, Groww, Upstox integration
+- **Signed webhooks**: Broker events require HMAC header using `BROKER_WEBHOOK_SECRET`.
+
+### Webhook Secret Management
+Set secrets only via environment (see `.env`). Example generation:
+```
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+`.env` entries:
+```
+BROKER_WEBHOOK_SECRET=<new_hex_secret>
+BROKER_WEBHOOK_ADDITIONAL_SECRETS=<old_secret_if_rotating>
+```
+Rotation steps:
+1. Generate new secret; set as BROKER_WEBHOOK_SECRET.
+2. Move previous primary into BROKER_WEBHOOK_ADDITIONAL_SECRETS (comma separated if multiple).
+3. Deploy; update broker to use new secret.
+4. After broker switched and logs show no usage of old, remove old from additional list.
+
+Webhook request headers:
+```
+X-Broker-Signature: <hex hmac sha256 of raw body>
+X-Broker-Signature-Alg: HMAC-SHA256
+```
+Unsigned or invalid signatures → 401.
 
 ## 🗄️ Database Models
 

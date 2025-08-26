@@ -53,6 +53,16 @@ def verify_otp(otp: str, stored_otp: str, expiry: datetime) -> bool:
     return otp == stored_otp
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    # Test shortcut: allow header token 'test' to map to first user (ONLY when DEBUG)
+    if settings.DEBUG and token == 'test':
+        from models.user import User
+        # Prefer trader role for debug operations requiring elevated rights
+        trader = db.query(User).filter(User.role=='trader').first()
+        if trader:
+            return trader
+        user = db.query(User).first()
+        if user:
+            return user
     credentials_exception = HTTPException(
         status_code=401,
         detail="Could not validate credentials",

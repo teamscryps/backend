@@ -3,7 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers import api_router
 from config import settings
 from database import engine, Base
-from models import User
+from models import User  # ensure model registration
+import os
+import logging
+from sqlalchemy import inspect
 
 app = FastAPI(title=settings.PROJECT_NAME)
 # Add CORS middleware
@@ -14,8 +17,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# IMPORTANT:
+# Avoid calling create_all() unconditionally in production because it can cause
+# schema drift when Alembic migrations add new columns (e.g. cash_available,
+# cash_blocked). Rely on Alembic instead. We only auto-create in explicit test/dev
+# scenarios (SQLite or env flag).
+if os.environ.get("TESTING") or engine.url.get_backend_name() == "sqlite" or os.environ.get("DEV_AUTO_CREATE") == "1":
+    Base.metadata.create_all(bind=engine)
+else:
+    # Lightweight runtime check: warn if critical new columns are missing so an admin
+    # knows to run `alembic upgrade head`.
+    try:
+        insp = inspect(engine)
+        if 'users' in insp.get_table_names():
+            user_cols = {c['name'] for c in insp.get_columns('users')}
+            missing = {c for c in ("cash_available", "cash_blocked") if c not in user_cols}
+            if missing:
+                logging.getLogger(__name__).warning(
+                    "Database schema missing columns %s on users table. Run Alembic migrations: `alembic upgrade head`.",
+                    ", ".join(sorted(missing))
+                )
+    except Exception as e:
+        logging.getLogger(__name__).warning("Schema inspection failed: %s", e)
 
 # Include API routers
 app.include_router(api_router, prefix="/api/v1")

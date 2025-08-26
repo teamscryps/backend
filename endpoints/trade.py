@@ -5,6 +5,11 @@ from database import get_db
 from schemas.trades import TradeOut, TradeCreate
 from schemas.user import User
 from models.trade import Trade
+from models.holding import Holding
+from services.holdings import (
+    apply_buy, apply_sell, validate_sell, InsufficientHoldingsError,
+    apply_buy_with_funds, apply_sell_with_funds, InsufficientFundsError
+)
 from models.order import Order
 from models.user import User as UserModel
 from security import get_current_user
@@ -13,8 +18,14 @@ import httpx
 from config import settings
 from fastapi_limiter.depends import RateLimiter
 from endpoints.logs import log_action, log_error, log_request
-from growwapi import GrowwAPI
-import pyotp
+try:
+    from growwapi import GrowwAPI  # type: ignore
+except ImportError:
+    GrowwAPI = None  # type: ignore
+try:
+    import pyotp  # type: ignore
+except ImportError:
+    pyotp = None  # type: ignore
 import upstox_client
 from upstox_client.rest import ApiException
 
@@ -238,21 +249,44 @@ async def create_trade(
                 log_error("upstox_trade_api_error", e, user, correlation_id, {"broker": "upstox", "stock_ticker": trade.stock_ticker})
                 raise HTTPException(status_code=503, detail=f"Upstox service unavailable: {str(e)}")
 
-        # Create trade record
-        new_trade = Trade(
-            user_id=user.id,
-            stock_ticker=trade.stock_ticker,
-            buy_price=trade.buy_price if trade.order_type == "buy" else None,
-            quantity=trade.quantity,
-            capital_used=trade.buy_price * trade.quantity if trade.order_type == "buy" else 0,
-            order_executed_at=datetime.utcnow(),
-            status="open" if trade.order_type == "buy" else "closed",
-            sell_price=trade.buy_price if trade.order_type == "sell" else None,
-            brokerage_charge=trade.brokerage_charge or 0,
-            mtf_charge=trade.mtf_charge or 0 if trade.trade_type == "mtf" else 0,
-            trade_type=trade.trade_type
-        )
-        db.add(new_trade)
+        # Validate holdings for sell before creating trade record
+        if trade.order_type == "sell":
+            try:
+                validate_sell(db, user.id, trade.stock_ticker, trade.quantity)
+            except InsufficientHoldingsError as e:
+                log_error("sell_without_holding", Exception("Insufficient holdings"), user, correlation_id, {"have": e.have, "want": e.want, "symbol": e.symbol})
+                raise HTTPException(status_code=400, detail="Insufficient holdings to sell")
+
+        # Transactional block: trade record + funds/holdings changes
+        try:
+            with db.begin():
+                new_trade = Trade(
+                    user_id=user.id,
+                    stock_ticker=trade.stock_ticker,
+                    buy_price=trade.buy_price if trade.order_type == "buy" else None,
+                    quantity=trade.quantity,
+                    capital_used=trade.buy_price * trade.quantity if trade.order_type == "buy" else 0,
+                    order_executed_at=datetime.utcnow(),
+                    status="open" if trade.order_type == "buy" else "closed",
+                    sell_price=trade.buy_price if trade.order_type == "sell" else None,
+                    brokerage_charge=trade.brokerage_charge or 0,
+                    mtf_charge=trade.mtf_charge or 0 if trade.trade_type == "mtf" else 0,
+                    trade_type=trade.trade_type
+                )
+                db.add(new_trade)
+                if trade.order_type == "buy":
+                    apply_buy_with_funds(db, user, new_trade.stock_ticker, new_trade.quantity, new_trade.buy_price or 0)
+                else:
+                    apply_sell_with_funds(db, user, new_trade.stock_ticker, new_trade.quantity, new_trade.sell_price or new_trade.buy_price or 0)
+        except InsufficientFundsError as e:
+            log_error("buy_insufficient_funds", e, user, correlation_id, {"need": e.needed, "have": e.available})
+            db.commit()  # ensure no partial
+            raise HTTPException(status_code=400, detail="Insufficient available funds")
+        except InsufficientHoldingsError as e:
+            log_error("sell_without_holding", e, user, correlation_id, {"have": e.have, "want": e.want})
+            db.commit()
+            raise HTTPException(status_code=400, detail="Insufficient holdings to sell")
+
         db.commit()
         db.refresh(new_trade)
         log_action("trade_created", user, correlation_id, {
@@ -416,6 +450,10 @@ async def update_trade(
             trade.brokerage_charge = trade_update.brokerage_charge or trade.brokerage_charge or 0
             trade.mtf_charge = trade_update.mtf_charge or trade.mtf_charge or 0 if trade_update.type == "mtf" else 0
             trade.type = trade_update.type
+
+        # Adjust holdings if closing trade via sell action
+        if trade.status == "closed" and trade_update.order_type == "sell":
+            apply_sell(db, trade.user_id, trade.stock_ticker, trade_update.quantity)
 
         db.commit()
         db.refresh(trade)
