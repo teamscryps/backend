@@ -592,6 +592,187 @@ export const placeSellOrder = async (orderData) => {
     throw new Error('Failed to place sell order');
 };
 
+// ==================== WATCHLIST ENDPOINTS ====================
+
+// Get user's watchlist
+export const getWatchlist = async () => {
+    const response = await apiCall('/watchlist', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch watchlist');
+};
+
+// Add stock to watchlist
+export const addToWatchlist = async (stockData) => {
+    const response = await apiCall('/watchlist', {
+        method: 'POST',
+        body: JSON.stringify(stockData)
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to add stock to watchlist');
+};
+
+// Remove stock from watchlist
+export const removeFromWatchlist = async (stockSymbol) => {
+    const response = await apiCall(`/watchlist/${stockSymbol}`, {
+        method: 'DELETE'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to remove stock from watchlist');
+};
+
+// Search stocks for watchlist
+export const searchStocks = async (query) => {
+    const response = await apiCall(`/watchlist/search?q=${encodeURIComponent(query)}`, {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to search stocks');
+};
+
+// Get real-time prices for watchlist stocks
+export const getWatchlistPrices = async () => {
+    const response = await apiCall('/watchlist/prices', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch watchlist prices');
+};
+
+// ==================== PORTFOLIO ENDPOINTS ====================
+
+// Get portfolio holdings
+export const getPortfolio = async () => {
+    const response = await apiCall('/portfolio', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch portfolio');
+};
+
+// Get portfolio snapshot
+export const getPortfolioSnapshot = async () => {
+    const response = await apiCall('/portfolio/snapshot', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch portfolio snapshot');
+};
+
+// ==================== MARKET DATA ENDPOINTS ====================
+
+// Get market data for specific stocks
+export const getMarketData = async (symbols) => {
+    const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
+    const response = await apiCall(`/market/data?symbols=${encodeURIComponent(symbolsParam)}`, {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch market data');
+};
+
+// Get popular stocks
+export const getPopularStocks = async () => {
+    const response = await apiCall('/market/popular', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch popular stocks');
+};
+
+// ==================== TRADER DASHBOARD ENDPOINTS ====================
+
+// Get trader dashboard data
+export const getTraderDashboard = async () => {
+    const response = await apiCall('/trader/dashboard', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch trader dashboard');
+};
+
+// Get trader clients
+export const getTraderClients = async () => {
+    const response = await apiCall('/trader/clients', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch trader clients');
+};
+
+// Add trader client
+export const addTraderClient = async (clientData) => {
+    const response = await apiCall('/trader/clients', {
+        method: 'POST',
+        body: JSON.stringify(clientData)
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to add trader client');
+};
+
+// ==================== NOTIFICATIONS ENDPOINTS ====================
+
+// Get notifications
+export const getNotifications = async () => {
+    const response = await apiCall('/notifications', {
+        method: 'GET'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to fetch notifications');
+};
+
+// Mark notification as read
+export const markNotificationRead = async (notificationId) => {
+    const response = await apiCall(`/notifications/${notificationId}/read`, {
+        method: 'PUT'
+    });
+    
+    if (response.ok) {
+        return await response.json();
+    }
+    throw new Error('Failed to mark notification as read');
+};
+
 // ==================== UTILITY FUNCTIONS ====================
 
 // Check if user is authenticated
@@ -715,4 +896,4 @@ try {
 // Logout
 await logout();
 // Redirect to login page
-*/ 
+*/

@@ -22,6 +22,9 @@ from datetime import datetime, timedelta
 from models.user import User
 from kiteconnect import KiteConnect
 
+from auth_service import create_trader_user, replace_trader_user
+from schemas.user import TraderCreate
+
 router = APIRouter()
 
 @router.delete("/api-credentials")
@@ -96,6 +99,48 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": new_user.email})
     refresh_token = create_refresh_token(data={"sub": new_user.email})
     await update_refresh_token(db, new_user.id, refresh_token)
+    return {"access_token": access_token, "token_type": "bearer", "refresh_token": refresh_token}
+
+@router.post("/create-trader", response_model=Token)
+async def create_trader(trader: TraderCreate, db: Session = Depends(get_db)):
+    """Create a new trader user and automatically link all existing unlinked clients to them"""
+    db_user = await get_user_by_email(db, trader.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    new_trader = await create_trader_user(
+        db=db,
+        email=trader.email,
+        password=trader.password,
+        name=trader.name,
+        mobile=trader.mobile
+    )
+    
+    access_token = create_access_token(data={"sub": new_trader.email})
+    refresh_token = create_refresh_token(data={"sub": new_trader.email})
+    await update_refresh_token(db, new_trader.id, refresh_token)
+    
+    return {"access_token": access_token, "token_type": "bearer", "refresh_token": refresh_token}
+
+@router.post("/replace-trader", response_model=Token)
+async def replace_trader(trader: TraderCreate, db: Session = Depends(get_db)):
+    """Replace the existing trader with a new one and transfer all clients"""
+    db_user = await get_user_by_email(db, trader.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    new_trader = await replace_trader_user(
+        db=db,
+        email=trader.email,
+        password=trader.password,
+        name=trader.name,
+        mobile=trader.mobile
+    )
+    
+    access_token = create_access_token(data={"sub": new_trader.email})
+    refresh_token = create_refresh_token(data={"sub": new_trader.email})
+    await update_refresh_token(db, new_trader.id, refresh_token)
+    
     return {"access_token": access_token, "token_type": "bearer", "refresh_token": refresh_token}
 
 @router.post("/signin", response_model=Token)

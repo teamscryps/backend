@@ -11,11 +11,16 @@ class OrderBase(BaseModel):
 class OrderCreate(OrderBase):
     user_id: int
 
-class OrderOut(OrderBase):
+class OrderOut(BaseModel):
     id: int
-    user_id: int
+    client_id: int  # user_id
+    stock: str  # stock_symbol
+    name: str  # Will be fetched
+    quantity: int
     price: float
+    type: str  # order_type
     mtf_enabled: bool
-    order_executed_at: datetime | None
+    status: str
+    timestamp: datetime
 
     model_config = ConfigDict(from_attributes=True)
