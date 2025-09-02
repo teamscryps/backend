@@ -8,6 +8,11 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
+class TraderCreate(UserBase):
+    password: str
+    name: str | None = None
+    mobile: str | None = None
+
 class UserRegistration(UserBase):
     # For registration without password - system will generate one
     mobile: str  # Mobile number is now required

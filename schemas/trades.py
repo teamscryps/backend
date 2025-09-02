@@ -59,3 +59,30 @@ class TradeOut(TradeBase):
         return v
 
     model_config = ConfigDict(from_attributes=True)
+
+class ActiveTradeOut(BaseModel):
+    id: int
+    stock: str  # stock_ticker
+    name: str  # Will be fetched or set
+    quantity: int
+    buy_price: float
+    current_price: float  # Need to fetch current price
+    mtf_enabled: bool
+    timestamp: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class TransactionOut(BaseModel):
+    id: int
+    stock: str
+    name: str
+    quantity: int
+    buy_price: float
+    current_price: float
+    mtf_enabled: bool
+    timestamp: datetime
+    type: str  # 'buy' or 'sell'
+    pnl: float
+    pnl_percent: float
+
+    model_config = ConfigDict(from_attributes=True)

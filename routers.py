@@ -10,6 +10,8 @@ from endpoints.broker_webhook import router as broker_webhook_router
 from endpoints.client import router as client_router
 from endpoints.realtime_ws import router as realtime_ws_router
 from endpoints.snapshot import router as snapshot_router
+from endpoints.stocks import router as stocks_router
+from endpoints.watchlist import router as watchlist_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
@@ -22,9 +24,11 @@ if not os.getenv("TEST_MODE"):
 api_router.include_router(trade_router, prefix="/trade", tags=["trade"]) 
 api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(accounts_router, prefix="/accounts", tags=["accounts"]) 
-api_router.include_router(trader_router)
+api_router.include_router(trader_router, prefix="/trader", tags=["trader"])
 api_router.include_router(audit_router)
 api_router.include_router(broker_webhook_router)
 api_router.include_router(client_router)
 api_router.include_router(realtime_ws_router, tags=["realtime"])
 api_router.include_router(snapshot_router)
+api_router.include_router(stocks_router, prefix="/trader", tags=["stocks"])
+api_router.include_router(watchlist_router, tags=["watchlist"])

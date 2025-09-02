@@ -10,6 +10,8 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     password = Column(String, nullable=False)  # Changed from hashed_password to match DB
     mobile = Column(String, nullable=False)  # Mobile is now required
+    pan = Column(String, nullable=True)  # PAN number for client
+    status = Column(String, nullable=True, default='active')  # 'active', 'pending', 'inactive'
     api_key = Column(String)
     api_secret = Column(String)
     broker = Column(String)  # e.g., 'zerodha', 'grow'
