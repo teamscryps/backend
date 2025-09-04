@@ -1,0 +1,13 @@
+{
+  "name": "trading-frontend-api",
+  "version": "1.0.0",
+  "description": "Frontend API service for trading application",
+  "type": "module",
+  "main": "frontend-api-service.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["trading", "api", "frontend"],
+  "author": "",
+  "license": "ISC"
+}

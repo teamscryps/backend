@@ -34,13 +34,13 @@ def get_real_market_data(user: UserModel, symbols: List[str]):
     market_data = []
 
     if not user.api_key or not user.session_id or user.broker != "zerodha":
-        # Return mock data if no active session
+        # Return null values if no active session
         for stock in POPULAR_STOCKS[:10]:  # Return first 10 stocks
             market_data.append({
                 "symbol": stock["symbol"],
                 "name": stock["name"],
-                "price": 100.0 + (hash(stock["symbol"]) % 900),  # Mock price
-                "mtf_amount": (100.0 + (hash(stock["symbol"]) % 900)) * 20  # Mock MTF
+                "price": None,
+                "mtf_amount": None
             })
         return market_data
 
@@ -67,23 +67,23 @@ def get_real_market_data(user: UserModel, symbols: List[str]):
                     "mtf_amount": quote.get("last_price", 0) * 20  # Approximate MTF amount
                 })
             else:
-                # Fallback to mock data for this stock
+                # Return null values for this stock
                 market_data.append({
                     "symbol": stock["symbol"],
                     "name": stock["name"],
-                    "price": 100.0 + (hash(stock["symbol"]) % 900),
-                    "mtf_amount": (100.0 + (hash(stock["symbol"]) % 900)) * 20
+                    "price": None,
+                    "mtf_amount": None
                 })
 
     except Exception as e:
         logging.error(f"Error fetching market data: {str(e)}")
-        # Return mock data on error
+        # Return null values on error
         for stock in POPULAR_STOCKS[:10]:
             market_data.append({
                 "symbol": stock["symbol"],
                 "name": stock["name"],
-                "price": 100.0 + (hash(stock["symbol"]) % 900),
-                "mtf_amount": (100.0 + (hash(stock["symbol"]) % 900)) * 20
+                "price": None,
+                "mtf_amount": None
             })
 
     return market_data

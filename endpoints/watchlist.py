@@ -32,15 +32,15 @@ POPULAR_STOCKS = {
 def get_real_time_price(user: UserModel, symbol: str):
     """Get real-time price for a stock symbol"""
     if not user.api_key or not user.session_id or user.broker != "zerodha":
-        # Return mock price if no active session
+        # Return null values if no active session
         return {
-            "currentPrice": 100.0 + (hash(symbol) % 900),
-            "previousClose": 95.0 + (hash(symbol) % 900),
-            "change": 5.0,
-            "changePercent": 5.26,
-            "high": 105.0 + (hash(symbol) % 900),
-            "low": 95.0 + (hash(symbol) % 900),
-            "volume": "1.2M"
+            "currentPrice": None,
+            "previousClose": None,
+            "change": None,
+            "changePercent": None,
+            "high": None,
+            "low": None,
+            "volume": None
         }
 
     try:
@@ -67,15 +67,15 @@ def get_real_time_price(user: UserModel, symbol: str):
     except Exception as e:
         logging.error(f"Error fetching price for {symbol}: {str(e)}")
 
-    # Fallback to mock data
+    # Return null values on error
     return {
-        "currentPrice": 100.0 + (hash(symbol) % 900),
-        "previousClose": 95.0 + (hash(symbol) % 900),
-        "change": 5.0,
-        "changePercent": 5.26,
-        "high": 105.0 + (hash(symbol) % 900),
-        "low": 95.0 + (hash(symbol) % 900),
-        "volume": "1.2M"
+        "currentPrice": None,
+        "previousClose": None,
+        "change": None,
+        "changePercent": None,
+        "high": None,
+        "low": None,
+        "volume": None
     }
 
 @router.get("/", response_model=List[WatchlistStockOut])
