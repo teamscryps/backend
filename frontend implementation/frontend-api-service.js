@@ -1,899 +1,601 @@
-// Frontend API Service - Complete Backend Integration
-// This file handles all API calls to your FastAPI backend
+import { z } from 'zod';
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
-// Helper function to get stored token
-const getAuthToken = () => {
-    return localStorage.getItem('access_token');
+// For development, use 'test' token if no token is provided
+let authToken = localStorage.getItem('authToken') || 'test'; // Default for debug mode
+let currentUser = JSON.parse(localStorage.getItem('currentUser')) || null;
+
+// Function to set auth token (call this after login)
+export const setAuthToken = (token) => {
+  authToken = token;
+  localStorage.setItem('authToken', token);
 };
 
-// Helper function to get refresh token
-const getRefreshToken = () => {
-    return localStorage.getItem('refresh_token');
+// Function to set current user info
+export const setCurrentUser = (user) => {
+  currentUser = user;
+  localStorage.setItem('currentUser', JSON.stringify(user));
 };
 
-// Helper function to store tokens
-const storeTokens = (accessToken, refreshToken) => {
-    localStorage.setItem('access_token', accessToken);
-    localStorage.setItem('refresh_token', refreshToken);
+// Function to clear auth data (logout)
+export const clearAuth = () => {
+  authToken = 'test';
+  currentUser = null;
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('currentUser');
 };
 
-// Helper function to clear tokens
-const clearTokens = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+// Function to check if user is logged in
+export const isLoggedIn = () => {
+  return authToken && authToken !== 'test';
 };
 
-// Helper function for API calls with authentication
-const apiCall = async (endpoint, options = {}) => {
-    const token = getAuthToken();
-    
-    const config = {
-        headers: {
-            'Content-Type': 'application/json',
-            ...(token && { 'Authorization': `Bearer ${token}` }),
-            ...options.headers
-        },
-        ...options
-    };
-
-    try {
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
-        
-        // Handle token refresh if 401
-        if (response.status === 401) {
-            const refreshed = await refreshAccessToken();
-            if (refreshed) {
-                // Retry the original request with new token
-                const newToken = getAuthToken();
-                config.headers.Authorization = `Bearer ${newToken}`;
-                return await fetch(`${API_BASE_URL}${endpoint}`, config);
-            }
-        }
-        
-        return response;
-    } catch (error) {
-        console.error('API call failed:', error);
-        throw error;
-    }
+// Function to check if user has trader role
+export const isTrader = () => {
+  return currentUser && currentUser.role === 'trader';
 };
 
-// Helper function to parse URL parameters
-const getUrlParameter = (name) => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get(name);
-};
-
-// Check if we have a request_token in URL (after Zerodha redirect)
-const hasZerodhaRequestToken = () => {
-    return getUrlParameter('request_token') !== null;
-};
-
-// Get request token from URL
-const getZerodhaRequestToken = () => {
-    return getUrlParameter('request_token');
-};
-
-// Get Zerodha login URL
-export const getZerodhaLoginURL = async () => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/dashboard/zerodha/login-url`, {
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to get Zerodha login URL');
-    }
-    
-    return response.json();
-};
-
-// Complete Zerodha activation with request token
-export const completeZerodhaIntegration = async (requestToken) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/auth/first-time-api-setup`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            api_key: 's0t4ipm0u66kk0jq',
-            api_secret: 'w6e1pmu3hk8ouselodxrmci7htg31mqb',
-            broker: 'zerodha',
-            request_token: requestToken
-        })
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to complete Zerodha integration');
-    }
-    
-    return response.json();
-};
-
-// Check if user has API credentials set up
-export const checkAPISetup = async () => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/auth/check-api-setup`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to check API setup');
-    }
-    
-    return response.json();
-};
-
-// Setup API credentials for the first time
-export const setupAPICredentials = async (credentials) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/auth/first-time-api-setup`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(credentials)
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to setup API credentials');
-    }
-    
-    return response.json();
-};
-
-// Get dashboard data
-export const getDashboardData = async () => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/dashboard/dashboard`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to fetch dashboard data');
-    }
-    
-    return response.json();
-};
-
-// User registration
-export const registerUser = async (userData) => {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(userData)
-    });
-    
-    if (!response.ok) {
-        throw new Error('Registration failed');
-    }
-    
-    return response.json();
-};
-
-// User login
-export const loginUser = async (credentials) => {
-    const formData = new URLSearchParams();
-    formData.append('username', credentials.email);
-    formData.append('password', credentials.password);
-    
-    const response = await fetch(`${API_BASE_URL}/auth/signin`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: formData
-    });
-    
-    if (!response.ok) {
-        throw new Error('Login failed');
-    }
-    
-    const data = await response.json();
-    storeTokens(data.access_token, data.refresh_token);
-    return data;
-};
-
-// User signup (with password)
-export const signupUser = async (userData) => {
-    const response = await fetch(`${API_BASE_URL}/auth/signup`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(userData)
-    });
-    
-    if (!response.ok) {
-        throw new Error('Signup failed');
-    }
-    
-    const data = await response.json();
-    storeTokens(data.access_token, data.refresh_token);
-    return data;
-};
-
-// Get all trades
-export const getTrades = async () => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/trades`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to fetch trades');
-    }
-    
-    return response.json();
-};
-
-// Get trade by ID
-export const getTradeById = async (tradeId) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/trades/${tradeId}`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to fetch trade');
-    }
-    
-    return response.json();
-};
-
-// Create new trade
-export const createTrade = async (tradeData) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/trades`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(tradeData)
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to create trade');
-    }
-    
-    return response.json();
-};
-
-// Update trade
-export const updateTrade = async (tradeId, tradeData) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/trades/${tradeId}`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(tradeData)
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to update trade');
-    }
-    
-    return response.json();
-};
-
-// Delete trade
-export const deleteTrade = async (tradeId) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/trades/${tradeId}`, {
-        method: 'DELETE',
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to delete trade');
-    }
-    
-    return response.json();
-};
-
-// Get all orders
-export const getOrders = async () => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/orders`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to fetch orders');
-    }
-    
-    return response.json();
-};
-
-// Create new order
-export const createOrder = async (orderData) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/trade/orders`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(orderData)
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to create order');
-    }
-    
-    return response.json();
-};
-
-// Get notifications
-export const getNotifications = async () => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/notifications`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to fetch notifications');
-    }
-    
-    return response.json();
-};
-
-// Mark notification as read
-export const markNotificationRead = async (notificationId) => {
-    const token = getAuthToken();
-    const response = await fetch(`${API_BASE_URL}/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    });
-    
-    if (!response.ok) {
-        throw new Error('Failed to mark notification as read');
-    }
-    
-    return response.json();
-};
-
-// Refresh Access Token
-export const refreshAccessToken = async () => {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) return false;
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/auth/refresh?refresh_token=${refreshToken}`);
-        if (response.ok) {
-            const data = await response.json();
-            storeTokens(data.access_token, data.refresh_token);
-            return true;
-        }
-    } catch (error) {
-        console.error('Token refresh failed:', error);
-    }
-    
-    clearTokens();
-    return false;
-};
-
-// Logout
-export const logout = async () => {
-    const refreshToken = getRefreshToken();
-    if (refreshToken) {
-        try {
-            await fetch(`${API_BASE_URL}/auth/logout?refresh_token=${refreshToken}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${getAuthToken()}`
-                }
-            });
-        } catch (error) {
-            console.error('Logout error:', error);
-        }
-    }
-    clearTokens();
-};
-
-// ==================== API CREDENTIALS MANAGEMENT ====================
-
-// First-time API setup
-export const setupAPICredentials = async (apiData) => {
-    const response = await apiCall('/auth/first-time-api-setup', {
-        method: 'POST',
-        body: JSON.stringify(apiData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to set up API credentials');
-};
-
-// Update API credentials
-export const updateAPICredentials = async (apiData) => {
-    const response = await apiCall('/auth/update-api-credentials', {
-        method: 'POST',
-        body: JSON.stringify(apiData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to update API credentials');
-};
-
-// Check API setup status
-export const checkAPISetup = async () => {
-    const response = await apiCall('/auth/check-api-setup', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to check API setup status');
-};
-
-// Get API credentials info
-export const getAPICredentialsInfo = async () => {
-    const response = await apiCall('/auth/api-credentials-info', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to get API credentials info');
-};
-
-// ==================== DASHBOARD ENDPOINTS ====================
-
-// Get Dashboard Data
-export const getDashboardData = async () => {
-    const response = await apiCall('/dashboard/dashboard', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch dashboard data');
-};
-
-// ==================== ZERODHA INTEGRATION ====================
-
-// Generate Zerodha Login URL
-export const getZerodhaLoginURL = async () => {
-    const response = await apiCall('/dashboard/zerodha/login-url', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to generate Zerodha login URL');
-};
-
-// Activate Brokerage (Updated for proper Zerodha flow)
-export const activateBrokerage = async (brokerageData) => {
-    const response = await apiCall('/dashboard/activate-brokerage', {
-        method: 'POST',
-        body: JSON.stringify(brokerageData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to activate brokerage');
-};
-
-// ==================== TRADE ENDPOINTS ====================
-
-// Get all trades
-export const getTrades = async () => {
-    const response = await apiCall('/trade/trades', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch trades');
-};
-
-// Create trade
-export const createTrade = async (tradeData) => {
-    const response = await apiCall('/trade/trade', {
-        method: 'POST',
-        body: JSON.stringify(tradeData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to create trade');
-};
-
-// Get specific trade
-export const getTrade = async (tradeId) => {
-    const response = await apiCall(`/trade/trade/${tradeId}`, {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch trade');
-};
-
-// Update trade
-export const updateTrade = async (tradeId, tradeData) => {
-    const response = await apiCall(`/trade/trade/${tradeId}`, {
-        method: 'PUT',
-        body: JSON.stringify(tradeData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to update trade');
-};
-
-// ==================== ORDER ENDPOINTS ====================
-
-// Place buy order
-export const placeBuyOrder = async (orderData) => {
-    const response = await apiCall('/dashboard/order/buy', {
-        method: 'POST',
-        body: JSON.stringify(orderData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to place buy order');
-};
-
-// Place sell order
-export const placeSellOrder = async (orderData) => {
-    const response = await apiCall('/dashboard/order/sell', {
-        method: 'POST',
-        body: JSON.stringify(orderData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to place sell order');
-};
-
-// ==================== WATCHLIST ENDPOINTS ====================
-
-// Get user's watchlist
-export const getWatchlist = async () => {
-    const response = await apiCall('/watchlist', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch watchlist');
-};
-
-// Add stock to watchlist
-export const addToWatchlist = async (stockData) => {
-    const response = await apiCall('/watchlist', {
-        method: 'POST',
-        body: JSON.stringify(stockData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to add stock to watchlist');
-};
-
-// Remove stock from watchlist
-export const removeFromWatchlist = async (stockSymbol) => {
-    const response = await apiCall(`/watchlist/${stockSymbol}`, {
-        method: 'DELETE'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to remove stock from watchlist');
-};
-
-// Search stocks for watchlist
-export const searchStocks = async (query) => {
-    const response = await apiCall(`/watchlist/search?q=${encodeURIComponent(query)}`, {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to search stocks');
-};
-
-// Get real-time prices for watchlist stocks
-export const getWatchlistPrices = async () => {
-    const response = await apiCall('/watchlist/prices', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch watchlist prices');
-};
-
-// ==================== PORTFOLIO ENDPOINTS ====================
-
-// Get portfolio holdings
-export const getPortfolio = async () => {
-    const response = await apiCall('/portfolio', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch portfolio');
-};
-
-// Get portfolio snapshot
-export const getPortfolioSnapshot = async () => {
-    const response = await apiCall('/portfolio/snapshot', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch portfolio snapshot');
-};
-
-// ==================== MARKET DATA ENDPOINTS ====================
-
-// Get market data for specific stocks
-export const getMarketData = async (symbols) => {
-    const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
-    const response = await apiCall(`/market/data?symbols=${encodeURIComponent(symbolsParam)}`, {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch market data');
-};
-
-// Get popular stocks
-export const getPopularStocks = async () => {
-    const response = await apiCall('/market/popular', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch popular stocks');
-};
-
-// ==================== TRADER DASHBOARD ENDPOINTS ====================
-
-// Get trader dashboard data
-export const getTraderDashboard = async () => {
-    const response = await apiCall('/trader/dashboard', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch trader dashboard');
-};
-
-// Get trader clients
-export const getTraderClients = async () => {
-    const response = await apiCall('/trader/clients', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch trader clients');
-};
-
-// Add trader client
-export const addTraderClient = async (clientData) => {
-    const response = await apiCall('/trader/clients', {
-        method: 'POST',
-        body: JSON.stringify(clientData)
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to add trader client');
-};
-
-// ==================== NOTIFICATIONS ENDPOINTS ====================
-
-// Get notifications
-export const getNotifications = async () => {
-    const response = await apiCall('/notifications', {
-        method: 'GET'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to fetch notifications');
-};
-
-// Mark notification as read
-export const markNotificationRead = async (notificationId) => {
-    const response = await apiCall(`/notifications/${notificationId}/read`, {
-        method: 'PUT'
-    });
-    
-    if (response.ok) {
-        return await response.json();
-    }
-    throw new Error('Failed to mark notification as read');
-};
-
-// ==================== UTILITY FUNCTIONS ====================
-
-// Check if user is authenticated
-export const isAuthenticated = () => {
-    return !!getAuthToken();
-};
-
-// Get current user info from token
+// Function to get current user info
 export const getCurrentUser = () => {
-    const token = getAuthToken();
-    if (!token) return null;
-    
-    try {
-        // Decode JWT token (basic implementation)
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        return {
-            email: payload.sub,
-            exp: payload.exp
-        };
-    } catch (error) {
-        console.error('Error decoding token:', error);
-        return null;
-    }
+  return currentUser;
 };
 
-// ==================== ZERODHA FLOW HELPER FUNCTIONS ====================
-
-// Complete Zerodha integration flow
-export const completeZerodhaIntegration = async (apiKey, apiSecret) => {
+// Initialize authentication state on module load
+export const initializeAuth = async () => {
+  if (isLoggedIn()) {
     try {
-        // Step 1: Set up API credentials
-        await setupAPICredentials({
-            api_key: apiKey,
-            api_secret: apiSecret,
-            broker: 'zerodha'
-        });
-        
-        // Step 2: Get login URL
-        const loginURLData = await getZerodhaLoginURL();
-        
-        return {
-            success: true,
-            login_url: loginURLData.login_url,
-            message: loginURLData.message
-        };
+      // Try to get fresh user info
+      const userInfo = await getUserProfile();
+      setCurrentUser(userInfo);
     } catch (error) {
-        return {
-            success: false,
-            error: error.message
-        };
+      // Profile fetch failed, but token might still be valid
+      // Set a default user instead of clearing auth
+      console.warn('Failed to load user profile on init, using default user');
+      setCurrentUser({
+        id: 0,
+        email: 'user@example.com',
+        name: null,
+        mobile: null,
+        role: 'trader',
+        broker: null,
+        capital: 0,
+        cash_available: 0,
+        cash_blocked: 0,
+        api_credentials_set: null,
+        created_at: null,
+        session_updated_at: null
+      });
     }
+  }
 };
 
-// Activate Zerodha with request token
-export const activateZerodhaWithToken = async (apiKey, apiSecret, requestToken) => {
-    try {
-        const result = await activateBrokerage({
-            brokerage: 'zerodha',
-            api_url: 'https://api.kite.trade',
-            api_key: apiKey,
-            api_secret: apiSecret,
-            request_token: requestToken
-        });
-        
-        return {
-            success: true,
-            message: result.message,
-            session_id: result.session_id
-        };
-    } catch (error) {
-        return {
-            success: false,
-            error: error.message
-        };
+// Auto-initialize on import
+if (typeof window !== 'undefined') {
+  // Only run in browser environment
+  initializeAuth();
+}
+
+// Zod Schemas for data validation
+
+const TradeSchema = z.object({
+  id: z.number(),
+  stock: z.string(),
+  name: z.string(),
+  quantity: z.number(),
+  buy_price: z.number(),
+  current_price: z.number(),
+  mtf_enabled: z.boolean(),
+  timestamp: z.string(),
+});
+
+const TransactionSchema = z.object({
+  id: z.number(),
+  stock: z.string(),
+  name: z.string(),
+  quantity: z.number(),
+  buy_price: z.number(),
+  current_price: z.number(),
+  mtf_enabled: z.boolean(),
+  timestamp: z.string(),
+  type: z.enum(['buy', 'sell']),
+  pnl: z.number(),
+  pnl_percent: z.number(),
+});
+
+const ClientSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+  pan: z.string(),
+  phone: z.string(),
+  status: z.enum(['active', 'pending', 'inactive']),
+  portfolio_value: z.number(),
+  join_date: z.string(),
+  broker_api_key: z.string().nullish(),
+});
+
+const ClientDetailsSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+  pan: z.string(),
+  phone: z.string(),
+  status: z.enum(['active', 'pending', 'inactive']),
+  portfolio_value: z.number(),
+  allocated_funds: z.number(),
+  remaining_funds: z.number(),
+  total_pnl: z.number(),
+  todays_pnl: z.number(),
+  active_trades_count: z.number(),
+  total_trades_count: z.number(),
+  join_date: z.string(),
+  broker_api_key: z.string().nullish(),
+});
+
+const OrderSchema = z.object({
+  id: z.number(),
+  client_id: z.number(),
+  stock: z.string(),
+  name: z.string(),
+  quantity: z.number(),
+  price: z.number(),
+  type: z.enum(['buy', 'sell']),
+  mtf_enabled: z.boolean(),
+  status: z.enum(['pending', 'executed', 'cancelled']),
+  timestamp: z.string(),
+});
+
+const StockOptionSchema = z.object({
+  symbol: z.string(),
+  name: z.string(),
+  price: z.number().nullable(),
+  mtf_amount: z.number().nullable(),
+});
+
+const DashboardStatsSchema = z.object({
+  totalPortfolio: z.number(),
+  activeTrades: z.number(),
+  todaysPNL: z.number(),
+  activeClients: z.number(),
+});
+
+const WatchlistStockSchema = z.object({
+    id: z.number(),
+    symbol: z.string(),
+    name: z.string(),
+    currentPrice: z.number().nullable(),
+    previousClose: z.number().nullable(),
+    change: z.number().nullable(),
+    changePercent: z.number().nullable(),
+    high: z.number().nullable(),
+    low: z.number().nullable(),
+    volume: z.string().nullable()
+});
+
+const AddClientRequestSchema = z.object({
+  name: z.string(),
+  email: z.string(),
+  pan: z.string(),
+  phone: z.string(),
+  broker_api_key: z.string().nullish(),
+  status: z.enum(['active', 'pending', 'inactive']).nullish(),
+});
+
+const PlaceOrderRequestSchema = z.object({
+  client_id: z.number(),
+  stock: z.string(),
+  quantity: z.number(),
+  price: z.number(),
+  type: z.enum(['buy', 'sell']),
+  mtf_enabled: z.boolean(),
+});
+
+const TradesHistoryFilterSchema = z.enum(['today', 'last7days', 'thisMonth', 'profitable', 'loss']);
+
+// Login/Auth Schemas
+const LoginRequestSchema = z.object({
+  username: z.string().email(),
+  password: z.string(),
+});
+
+const TokenResponseSchema = z.object({
+  access_token: z.string(),
+  token_type: z.string(),
+  refresh_token: z.string(),
+}).passthrough();
+
+const UserInfoSchema = z.any();
+
+// Authentication Functions
+export const login = async (email, password) => {
+  try {
+    console.log('Attempting login for:', email);
+    const response = await fetch(`${API_BASE_URL}/auth/signin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        username: email,
+        password: password,
+      }),
+    });
+
+    console.log('Login response status:', response.status);
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Login failed with error:', errorData);
+      throw new Error(errorData.detail || 'Login failed');
     }
+
+    const tokenData = await response.json();
+    console.log('Token data received:', tokenData);
+    const validatedToken = TokenResponseSchema.parse(tokenData);
+
+    // Set the auth token
+    setAuthToken(validatedToken.access_token);
+
+    // Get user info
+    try {
+      const userInfo = await getUserProfile();
+      setCurrentUser(userInfo);
+      console.log('User profile loaded:', userInfo);
+    } catch (profileError) {
+      console.warn('Failed to load user profile, but login succeeded:', profileError);
+      // Set a default user with basic info from login
+      setCurrentUser({
+        id: 0,
+        email: email,
+        name: null,
+        mobile: null,
+        role: 'trader', // Default to trader role
+        broker: null,
+        capital: 0,
+        cash_available: 0,
+        cash_blocked: 0,
+        api_credentials_set: null,
+        created_at: null,
+        session_updated_at: null
+      });
+    }
+
+    return {
+      token: validatedToken,
+      user: getCurrentUser()
+    };
+  } catch (error) {
+    console.error('Login error:', error);
+    throw error;
+  }
 };
 
-// ==================== USAGE EXAMPLES ====================
+export const logout = () => {
+  clearAuth();
+};
 
-/*
-// Example usage in your frontend components:
+export const getUserProfile = async () => {
+  const response = await fetch(`${API_BASE_URL}/auth/profile`, {
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+    },
+  });
 
-// Complete Zerodha Integration Flow
-try {
-    // Step 1: Set up credentials and get login URL
-    const setupResult = await completeZerodhaIntegration('your_api_key', 'your_api_secret');
-    if (setupResult.success) {
-        // Open login URL in new window/tab
-        window.open(setupResult.login_url, '_blank');
-        
-        // Show instructions to user
-        alert('Please login to Zerodha and copy the request_token from the redirect URL');
+  if (!response.ok) {
+    throw new Error('Failed to get user profile');
+  }
+
+  const userData = await response.json();
+  console.log('Profile response data:', userData);
+
+  // Since we use z.any(), just return the data as-is
+  return userData;
+};
+
+export const refreshToken = async () => {
+  // This would need to be implemented if you want to handle token refresh
+  // For now, we'll just return the current token
+  return authToken;
+};
+
+// Helper function to check if user is authenticated and has trader role
+export const requireTraderAuth = () => {
+  if (!isLoggedIn()) {
+    throw new Error('Authentication required. Please login first.');
+  }
+
+  if (!isTrader()) {
+    throw new Error('Trader role required. This action requires trader privileges.');
+  }
+};
+
+async function fetchFromAPI(endpoint, schema) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+      },
+    });
+
+    if (response.status === 404) {
+      // Endpoint doesn't exist, return empty data instead of throwing
+      console.warn(`API endpoint ${endpoint} not found (404), returning empty data`);
+      return schema.parse ? schema.parse([]) : [];
     }
-} catch (error) {
-    console.error('Zerodha setup failed:', error);
-}
 
-// Step 2: Activate with request token (after user gets it from Zerodha)
-try {
-    const activationResult = await activateZerodhaWithToken('your_api_key', 'your_api_secret', 'request_token_from_zerodha');
-    if (activationResult.success) {
-        console.log('Zerodha activated successfully!');
-        // Refresh dashboard to show real data
-        const dashboardData = await getDashboardData();
-        console.log('Real dashboard data:', dashboardData);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch from ${endpoint}: ${response.status}`);
     }
-} catch (error) {
-    console.error('Zerodha activation failed:', error);
+
+    const data = await response.json();
+    return schema.parse ? schema.parse(data) : data;
+  } catch (error) {
+    if (error.message.includes('404')) {
+      // If it's a 404, return empty data
+      console.warn(`API endpoint ${endpoint} not found, returning empty data`);
+      return schema.parse ? schema.parse([]) : [];
+    }
+    throw error;
+  }
 }
 
-// Get Dashboard Data (now with real Zerodha data)
-try {
-    const dashboardData = await getDashboardData();
-    console.log('Dashboard data:', dashboardData);
-    // Update UI with dashboard data
-} catch (error) {
-    console.error('Failed to fetch dashboard:', error);
-    // Show error message to user
+async function postToAPI(endpoint, data, schema) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (response.status === 404) {
+      console.warn(`API endpoint ${endpoint} not found (404), skipping POST request`);
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to post to ${endpoint}: ${response.status}`);
+    }
+
+    const responseData = await response.json();
+    return schema.parse ? schema.parse(responseData) : responseData;
+  } catch (error) {
+    if (error.message.includes('404')) {
+      console.warn(`API endpoint ${endpoint} not found, skipping POST request`);
+      return null;
+    }
+    throw error;
+  }
 }
 
-// Logout
-await logout();
-// Redirect to login page
-*/
+async function putToAPI(endpoint, data, schema) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (response.status === 404) {
+      console.warn(`API endpoint ${endpoint} not found (404), skipping PUT request`);
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to put to ${endpoint}: ${response.status}`);
+    }
+
+    const responseData = await response.json();
+    return schema.parse ? schema.parse(responseData) : responseData;
+  } catch (error) {
+    if (error.message.includes('404')) {
+      console.warn(`API endpoint ${endpoint} not found, skipping PUT request`);
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function deleteFromAPI(endpoint) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+      },
+    });
+
+    if (response.status === 404) {
+      console.warn(`API endpoint ${endpoint} not found (404), skipping DELETE request`);
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to delete from ${endpoint}: ${response.status}`);
+    }
+  } catch (error) {
+    if (error.message.includes('404')) {
+      console.warn(`API endpoint ${endpoint} not found, skipping DELETE request`);
+      return;
+    }
+    throw error;
+  }
+}
+
+export const api = {
+  // Client Management APIs
+  getClients: () => {
+    requireTraderAuth();
+    return fetchFromAPI('trader/clients', z.array(ClientSchema));
+  },
+  getClientDetails: (id) => {
+    requireTraderAuth();
+    return fetchFromAPI(`trader/clients/${id}`, ClientDetailsSchema);
+  },
+  addClient: (clientData) => {
+    requireTraderAuth();
+    return postToAPI('trader/clients', clientData, ClientSchema);
+  },
+  updateClient: (id, clientData) => {
+    requireTraderAuth();
+    return putToAPI(`trader/clients/${id}`, clientData, ClientSchema);
+  },
+  deleteClient: (id) => {
+    requireTraderAuth();
+    return deleteFromAPI(`trader/clients/${id}`);
+  },
+
+  // Client Transactions and Trades APIs
+  getClientTransactions: (id) => {
+    requireTraderAuth();
+    return fetchFromAPI(`trader/clients/${id}/transactions`, z.array(TransactionSchema));
+  },
+  getClientActiveTrades: (id) => {
+    requireTraderAuth();
+    return fetchFromAPI(`trader/clients/${id}/trades/active`, z.array(TradeSchema));
+  },
+  getClientTradesHistory: (id, filter) => {
+    requireTraderAuth();
+    const query = filter ? `?filter=${filter}` : '';
+    return fetchFromAPI(`trader/clients/${id}/trades/history${query}`, z.array(TransactionSchema));
+  },
+
+  // Order Management APIs
+  placeOrder: (orderData) => {
+    requireTraderAuth();
+    return postToAPI('trader/orders', orderData, OrderSchema);
+  },
+  getClientOrders: (id) => {
+    requireTraderAuth();
+    return fetchFromAPI(`trader/clients/${id}/orders`, z.array(OrderSchema));
+  },
+  cancelOrder: (orderId) => {
+    requireTraderAuth();
+    return postToAPI(`trader/orders/${orderId}/cancel`, {}, z.object({ order_id: z.number(), status: z.string(), released_amount: z.number().nullish() }));
+  },
+
+  // Stock and Market Data APIs
+  getStockOptions: () => {
+    requireTraderAuth();
+    return fetchFromAPI('trader/stocks/options', z.array(StockOptionSchema)).catch(() => []);
+  },
+  getStockDetails: (symbol) => {
+    requireTraderAuth();
+    return fetchFromAPI(`trader/stocks/${symbol}`, StockOptionSchema);
+  },
+
+  // Dashboard and Analytics APIs
+  getDashboardStats: () => {
+    requireTraderAuth();
+    return fetchFromAPI('dashboard/dashboard', z.any()).catch(() => ({
+      totalPortfolio: 0,
+      activeTrades: 0,
+      todaysPNL: 0,
+      activeClients: 0
+    }));
+  },
+
+  // Watchlist APIs
+  getWatchlist: () => {
+    requireTraderAuth();
+    return fetchFromAPI('watchlist', z.array(WatchlistStockSchema)).catch(() => []);
+  },
+  addStockToWatchlist: (stock) => {
+    requireTraderAuth();
+    return postToAPI('watchlist', stock, WatchlistStockSchema);
+  },
+  removeStockFromWatchlist: (id) => {
+    requireTraderAuth();
+    return deleteFromAPI(`watchlist/${id}`);
+  },
+
+  // Direct Trader Trading APIs (Trader can trade for themselves)
+  placeTraderOrder: (orderData) => {
+    requireTraderAuth();
+    return postToAPI('trader/my-orders', orderData, OrderSchema);
+  },
+  getTraderOrders: () => {
+    requireTraderAuth();
+    return fetchFromAPI('trader/my-orders', z.array(OrderSchema));
+  },
+  getTraderHoldings: () => {
+    requireTraderAuth();
+    return fetchFromAPI('trader/holdings', z.array(z.object({
+      symbol: z.string(),
+      quantity: z.number(),
+      avg_price: z.number(),
+      last_updated: z.string().nullable()
+    }))).catch(() => []);
+  },
+  getTraderPortfolio: () => {
+    requireTraderAuth();
+    return fetchFromAPI('trader/portfolio', z.any());
+  },
+
+  // Bulk Trading APIs
+  tradeForAllClients: (stock, allocation, orderType, price, type) => {
+    requireTraderAuth();
+    const payload = {
+      stock_ticker: stock,
+      allocation: allocation,
+      order_type: orderType,
+      price: price,
+      type: type
+    };
+    return postToAPI('trader/bulk-trade-all', payload, z.object({
+      task_id: z.string(),
+      message: z.string(),
+      total_clients: z.number(),
+      estimated_execution_time: z.string()
+    }));
+  },
+  getBulkTradeStatus: (taskId) => {
+    requireTraderAuth();
+    return fetchFromAPI(`trader/bulk-trade-status/${taskId}`, z.object({
+      task_id: z.string(),
+      status: z.enum(['pending', 'processing', 'completed', 'failed']),
+      progress: z.number(),
+      results: z.array(z.object({
+        user_id: z.number(),
+        status: z.enum(['success', 'failed', 'skipped']),
+        trade_id: z.number().nullish(),
+        reason: z.string().nullish()
+      })),
+      created_at: z.string(),
+      completed_at: z.string().nullish()
+    }));
+  },
+
+  // Stock Search and Discovery APIs
+  searchStocks: (query) => {
+    requireTraderAuth();
+    return fetchFromAPI(`watchlist/search?q=${encodeURIComponent(query)}`, z.object({
+      results: z.array(z.object({
+        symbol: z.string(),
+        name: z.string(),
+        currentPrice: z.number().nullable(),
+        changePercent: z.number().nullable()
+      }))
+    }));
+  },
+
+  // Audit Trail APIs
+  getAuditLogs: (filters) => {
+    requireTraderAuth();
+    const query = new URLSearchParams(filters).toString();
+    return fetchFromAPI(`audit/logs?${query}`, z.array(z.object({
+      id: z.number(),
+      actor_user_id: z.number(),
+      target_user_id: z.number(),
+      action: z.string(),
+      description: z.string(),
+      details: z.any(),
+      created_at: z.string()
+    })));
+  }
+};

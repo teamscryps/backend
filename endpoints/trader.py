@@ -901,3 +901,181 @@ def get_trader_portfolio(current_user: UserModel = Depends(get_current_user), db
         "cash_blocked": current_user.cash_blocked or 0,
         "holdings": holdings_data
     }
+
+
+# Bulk Trading for All Clients
+class BulkTradeAllRequest(BaseModel):
+    stock_ticker: str
+    quantity: int
+    order_type: Literal['buy', 'sell']
+    type: Literal['eq', 'mtf']
+    price: Optional[float] = None
+    percent_quantity: Optional[float] = None  # Alternative: use % of capital instead of fixed quantity
+
+
+@router.post("/bulk-trade-all", response_model=dict)
+async def bulk_trade_all_clients(payload: BulkTradeAllRequest, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Place trades for ALL trader's clients at once"""
+    ensure_trader(current_user)
+
+    # Get all trader's clients
+    from config import settings
+    if settings.DEBUG:
+        # In debug mode, get all clients
+        clients = db.query(UserModel).filter(UserModel.role == 'client').all()
+    else:
+        # Get mapped clients
+        mappings = db.query(TraderClient).filter(TraderClient.trader_id == current_user.id).all()
+        client_ids = [m.client_id for m in mappings]
+        if not client_ids:
+            raise HTTPException(status_code=400, detail="No clients linked to this trader")
+        clients = db.query(UserModel).filter(UserModel.id.in_(client_ids)).all()
+
+    if not clients:
+        raise HTTPException(status_code=400, detail="No clients found")
+
+    results = []
+    successful_trades = 0
+    failed_trades = 0
+
+    # Process each client
+    for client in clients:
+        try:
+            # Skip if client doesn't have active session (unless in debug mode)
+            if not client.session_id and not settings.DEBUG:
+                results.append({
+                    "client_id": client.id,
+                    "client_name": client.name,
+                    "status": "failed",
+                    "error": "Client brokerage session inactive"
+                })
+                failed_trades += 1
+                continue
+
+            # Calculate quantity if using percentage
+            actual_quantity = payload.quantity
+            if payload.percent_quantity:
+                # Use percentage of client's capital
+                capital_to_use = float(client.capital or 0) * (payload.percent_quantity / 100)
+                # Get current price (mock for now, should use real price)
+                current_price = 100.0 + (hash(payload.stock_ticker) % 900)  # Mock price
+                actual_quantity = int(capital_to_use / current_price) if current_price > 0 else 0
+
+            # Validate funds for buy orders
+            if payload.order_type == 'buy' and payload.price:
+                est_cost = Decimal(str(payload.price)) * Decimal(actual_quantity)
+                spendable = Decimal(str(client.cash_available or 0))
+                if spendable < est_cost and not ALLOW_UNLINKED_CLIENTS_FOR_TESTS:
+                    results.append({
+                        "client_id": client.id,
+                        "client_name": client.name,
+                        "status": "failed",
+                        "error": f"Insufficient funds: need {float(est_cost)}, have {float(spendable)}"
+                    })
+                    failed_trades += 1
+                    continue
+
+            # Validate holdings for sell orders
+            if payload.order_type == 'sell':
+                try:
+                    validate_sell(db, client.id, payload.stock_ticker, actual_quantity)
+                except InsufficientHoldingsError as e:
+                    results.append({
+                        "client_id": client.id,
+                        "client_name": client.name,
+                        "status": "failed",
+                        "error": f"Insufficient holdings: have {e.have}, want {e.want}"
+                    })
+                    failed_trades += 1
+                    continue
+
+            # Execute order for this client
+            adapter = get_adapter(client)
+            try:
+                ensure = adapter.ensure_session(client)
+                if not ensure.ok and not settings.DEBUG:
+                    raise BrokerSessionError(ensure.reason or "session invalid")
+
+                order_req = PlaceOrderRequest(
+                    symbol=payload.stock_ticker,
+                    side=payload.order_type.upper(),
+                    quantity=actual_quantity,
+                    order_type="MARKET" if payload.price is None else "LIMIT",
+                    price=payload.price,
+                    product="MTF" if payload.type == "mtf" else ("CNC" if client.broker=='zerodha' else "DELIVERY"),
+                    validity="DAY",
+                    user_id=client.id
+                )
+
+                order_result = await adapter.place_order(order_req)
+
+                # Create order record
+                order = Order(
+                    user_id=client.id,
+                    stock_symbol=payload.stock_ticker,
+                    quantity=actual_quantity,
+                    price=payload.price,
+                    order_type=payload.order_type,
+                    mtf_enabled=(payload.type == "mtf"),
+                    status="NEW",
+                    broker_order_id=order_result.broker_order_id if hasattr(order_result, 'broker_order_id') else None
+                )
+                db.add(order)
+                db.flush()
+
+                # Handle fund reservations
+                if payload.order_type == 'buy' and payload.price:
+                    est_cost = Decimal(str(payload.price)) * Decimal(actual_quantity)
+                    client.cash_available = Decimal(str(client.cash_available or 0)) - est_cost
+                    current_blocked = Decimal(str(client.cash_blocked or 0))
+                    client.cash_blocked = current_blocked + est_cost
+
+                elif payload.order_type == 'sell':
+                    from models.holding import Holding
+                    holding = db.query(Holding).filter(Holding.user_id==client.id, Holding.symbol==payload.stock_ticker).with_for_update().first()
+                    if holding:
+                        holding.reserved_qty += actual_quantity
+
+                # Log the action
+                log_trader_action(db, current_user.id, client.id, "BULK_ORDER_PLACED",
+                    f"Bulk {payload.order_type.upper()} {payload.stock_ticker} x{actual_quantity}",
+                    {"bulk_trade": True, "quantity": actual_quantity, "type": payload.type})
+
+                db.commit()
+
+                results.append({
+                    "client_id": client.id,
+                    "client_name": client.name,
+                    "status": "success",
+                    "order_id": order.id,
+                    "quantity": actual_quantity,
+                    "broker_order_id": order.broker_order_id
+                })
+                successful_trades += 1
+
+            except Exception as e:
+                db.rollback()
+                results.append({
+                    "client_id": client.id,
+                    "client_name": client.name,
+                    "status": "failed",
+                    "error": f"Broker error: {str(e)}"
+                })
+                failed_trades += 1
+
+        except Exception as e:
+            results.append({
+                "client_id": client.id,
+                "client_name": client.name,
+                "status": "failed",
+                "error": f"Unexpected error: {str(e)}"
+            })
+            failed_trades += 1
+
+    return {
+        "message": f"Bulk trade completed: {successful_trades} successful, {failed_trades} failed",
+        "total_clients": len(clients),
+        "successful_trades": successful_trades,
+        "failed_trades": failed_trades,
+        "results": results
+    }

@@ -212,14 +212,17 @@ async def replace_trader_user(db: Session, email: str, password: str, name: str 
     db.commit()
     db.refresh(new_trader)
     
-    # If there was an existing trader, transfer all their clients to the new trader
+    # If there was an existing trader, securely replace them
     if existing_trader:
+        # 🔐 Use secure deletion process
+        await secure_delete_trader(db, existing_trader, new_trader)
+        
         # Update all trader-client mappings to point to the new trader
         db.query(TraderClient).filter(TraderClient.trader_id == existing_trader.id).update({
             TraderClient.trader_id: new_trader.id
         })
         
-        # Delete the old trader
+        # Delete the old trader (now safe after cleanup)
         db.delete(existing_trader)
         db.commit()
         
@@ -383,7 +386,72 @@ async def generate_and_store_otp(db: Session, user: User):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
 
+async def secure_delete_trader(db: Session, trader: User, replacement_trader: User = None):
+    """Securely delete a trader with proper cleanup and security measures"""
+    
+    # 🔐 SECURITY: Invalidate refresh token first
+    await invalidate_refresh_token(db, trader.id)
+    
+    # 📊 AUDIT: Log the trader deletion/replacement
+    from models.audit_log import AuditLog
+    from datetime import datetime
+    
+    action_type = "TRADER_REPLACED" if replacement_trader else "TRADER_DELETED"
+    description = f"Trader {trader.email} deleted"
+    if replacement_trader:
+        description += f", replaced with {replacement_trader.email}"
+    
+    audit_entry = AuditLog(
+        action=action_type,
+        description=description,
+        details={
+            "deleted_trader_id": trader.id,
+            "deleted_trader_email": trader.email,
+            "replacement_trader_id": replacement_trader.id if replacement_trader else None,
+            "replacement_trader_email": replacement_trader.email if replacement_trader else None,
+            "token_invalidated": True
+        },
+        created_at=datetime.utcnow()
+    )
+    db.add(audit_entry)
+    db.commit()
+    
+    # 🧹 Clean up orphaned records
+    await cleanup_orphaned_trader_records(db, trader.id)
+    
+    print(f"🔐 Security cleanup completed for trader {trader.email}")
+    return True
+
+async def cleanup_orphaned_trader_records(db: Session, deleted_trader_id: int):
+    """Clean up orphaned records after trader deletion"""
+    try:
+        from models.order import Order
+        from models.trade import Trade
+        
+        # Handle orders that reference the deleted trader
+        orphaned_orders = db.query(Order).filter(Order.user_id == deleted_trader_id).all()
+        if orphaned_orders:
+            print(f"🧹 Found {len(orphaned_orders)} orphaned orders, marking as cancelled")
+            for order in orphaned_orders:
+                order.status = "CANCELLED"
+        
+        # Handle trades where trader was the executor
+        orphaned_trades = db.query(Trade).filter(Trade.trader_id == deleted_trader_id).all()
+        if orphaned_trades:
+            print(f"🧹 Found {len(orphaned_trades)} trades executed by deleted trader")
+            # Note: We don't delete trades, just log them
+            for trade in orphaned_trades:
+                print(f"  - Trade ID {trade.id}: {trade.stock_ticker} ({trade.quantity} shares)")
+        
+        db.commit()
+        print(f"✅ Cleaned up orphaned records for deleted trader ID {deleted_trader_id}")
+        
+    except Exception as e:
+        print(f"⚠️ Error during cleanup: {str(e)}")
+        # Don't fail the entire operation due to cleanup errors
+
 async def verify_user_otp(db: Session, user: User):
+    """Clear OTP fields after successful OTP verification"""
     user.otp = None
     user.otp_expiry = None
     db.commit()

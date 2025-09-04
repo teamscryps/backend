@@ -1,16 +1,17 @@
 from pydantic import BaseModel, ConfigDict
+from typing import Optional
 
 class WatchlistStockOut(BaseModel):
     id: int
     symbol: str
     name: str
-    currentPrice: float
-    previousClose: float
-    change: float
-    changePercent: float
-    high: float
-    low: float
-    volume: str
+    currentPrice: Optional[float]
+    previousClose: Optional[float]
+    change: Optional[float]
+    changePercent: Optional[float]
+    high: Optional[float]
+    low: Optional[float]
+    volume: Optional[str]
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -22,7 +23,7 @@ class WatchlistStockCreate(BaseModel):
 class WatchlistSearchResult(BaseModel):
     symbol: str
     name: str
-    currentPrice: float
-    changePercent: float
+    currentPrice: Optional[float]
+    changePercent: Optional[float]
 
     model_config = ConfigDict(from_attributes=True)
