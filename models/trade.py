@@ -25,6 +25,7 @@ class Trade(Base):
     brokerage_charge = Column(Float, nullable=True)  # deduction: brokerage
     mtf_charge = Column(Float, nullable=True)  # deduction: mtf charge
     type = Column(String, nullable=False)  # 'eq' or 'mtf'
+    order_execution_type = Column(String, nullable=False, default='MARKET')  # 'MARKET' or 'LIMIT'
     order_id = Column(Integer, ForeignKey('orders.id'))
     
     # Relationships
