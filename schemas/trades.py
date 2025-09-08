@@ -5,13 +5,15 @@ from typing import Optional
 class TradeBase(BaseModel):
     price: float
     quantity: int
+    order_execution_type: str
 
-class TradeCreate(TradeBase):
+class TradeCreate(BaseModel):
     order_id: int
     stock_ticker: str
-    type: str  # Changed to match model field
-    order_type: str  # "buy" or "sell"
-    buy_price: Optional[float] = None
+    type: str  # "eq" or "mtf"
+    transaction_type: str  # "buy" or "sell"
+    order_execution_type: str  # "MARKET" or "LIMIT"
+    price: float  # The price for the order
     brokerage_charge: Optional[float] = None
     mtf_charge: Optional[float] = None
 
@@ -22,11 +24,18 @@ class TradeCreate(TradeBase):
             raise ValueError("Trade type must be 'eq' or 'mtf'")
         return v
 
-    @field_validator("order_type")
-    def validate_order_type(cls, v):
+    @field_validator("transaction_type")
+    def validate_transaction_type(cls, v):
         valid_types = ["buy", "sell"]
         if v not in valid_types:
-            raise ValueError("Order type must be 'buy' or 'sell'")
+            raise ValueError("Transaction type must be 'buy' or 'sell'")
+        return v
+
+    @field_validator("order_execution_type")
+    def validate_order_execution_type(cls, v):
+        valid_types = ["MARKET", "LIMIT"]
+        if v not in valid_types:
+            raise ValueError("Order execution type must be 'MARKET' or 'LIMIT'")
         return v
 
 class TradeOut(TradeBase):

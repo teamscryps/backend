@@ -161,20 +161,23 @@ async def create_trade(
             raise HTTPException(status_code=400, detail="Broker not activated")
 
         response = None
+        order_data = {
+            "tradingsymbol": trade.stock_ticker,
+            "exchange": "NSE",
+            "transaction_type": trade.transaction_type.upper(),
+            "order_type": trade.order_execution_type,
+            "quantity": trade.quantity,
+            "product": "MTF" if trade.type == "mtf" else "CNC"
+        }
+        if trade.order_execution_type == "LIMIT":
+            order_data["price"] = trade.price
         if user.broker == "zerodha":
             async with httpx.AsyncClient() as client:
                 try:
                     response = await client.post(
                         "https://api.kite.trade/orders/regular",
                         headers={"Authorization": f"token {user.session_id}"},
-                        data={
-                            "tradingsymbol": trade.stock_ticker,
-                            "exchange": "NSE",
-                            "transaction_type": trade.order_type.upper(),
-                            "order_type": "MARKET",
-                            "quantity": trade.quantity,
-                            "product": "MTF" if trade.type == "mtf" else "CNC"
-                        },
+                        data=order_data,
                         timeout=10
                     )
                     if response.status_code == 401:
@@ -183,14 +186,7 @@ async def create_trade(
                         response = await client.post(
                             "https://api.kite.trade/orders/regular",
                             headers={"Authorization": f"token {new_access_token}"},
-                            data={
-                                "tradingsymbol": trade.stock_ticker,
-                                "exchange": "NSE",
-                                "transaction_type": trade.order_type.upper(),
-                                "order_type": "MARKET",
-                                "quantity": trade.quantity,
-                                "product": "MTF" if trade.type == "mtf" else "CNC"
-                            },
+                            data=order_data,
                             timeout=10
                         )
                     if response.status_code != 200:
@@ -204,15 +200,18 @@ async def create_trade(
             access_token = await get_groww_access_token(user, db, correlation_id)
             groww = GrowwAPI(access_token)
             try:
-                response = groww.place_order(
-                    symbol=trade.stock_ticker,
-                    exchange="NSE",
-                    transaction_type=trade.order_type.upper(),
-                    order_type="MARKET",
-                    quantity=trade.quantity,
-                    product="MTF" if trade.type == "mtf" else "DELIVERY",
-                    timeout=10
-                )
+                order_kwargs = {
+                    "symbol": trade.stock_ticker,
+                    "exchange": "NSE",
+                    "transaction_type": trade.transaction_type.upper(),
+                    "order_type": trade.order_execution_type,
+                    "quantity": trade.quantity,
+                    "product": "MTF" if trade.type == "mtf" else "DELIVERY",
+                    "timeout": 10
+                }
+                if trade.order_execution_type == "LIMIT":
+                    order_kwargs["price"] = trade.price
+                response = groww.place_order(**order_kwargs)
                 if not response.get("success"):
                     log_error("groww_trade_failed", Exception("Trade placement failed"), user, correlation_id, {"broker": "groww", "stock_ticker": trade.stock_ticker})
                     raise HTTPException(status_code=400, detail="Failed to place Groww trade")
@@ -226,19 +225,20 @@ async def create_trade(
                 config.access_token = user.session_id
                 config.api_key = settings.UPSTOX_API_KEY
                 api = upstox_client.OrderApi(upstox_client.ApiClient(config))
-                response = api.place_order(
-                    quantity=trade.quantity,
-                    product="M" if trade.type == "mtf" else "D",
-                    validity="DAY",
-                    price=0,  # Market order
-                    tag="",
-                    instrument_token=trade.stock_ticker,
-                    order_type="MARKET",
-                    transaction_type=trade.order_type.upper(),
-                    disclosed_quantity=0,
-                    trigger_price=0,
-                    is_amo=False
-                )
+                order_kwargs = {
+                    "quantity": trade.quantity,
+                    "product": "M" if trade.type == "mtf" else "D",
+                    "validity": "DAY",
+                    "price": trade.price if trade.order_execution_type == "LIMIT" else 0,
+                    "tag": "",
+                    "instrument_token": trade.stock_ticker,
+                    "order_type": trade.order_execution_type,
+                    "transaction_type": trade.transaction_type.upper(),
+                    "disclosed_quantity": 0,
+                    "trigger_price": 0,
+                    "is_amo": False
+                }
+                response = api.place_order(**order_kwargs)
                 if not response or not hasattr(response, 'order_id'):
                     log_error("upstox_trade_failed", Exception("Trade placement failed"), user, correlation_id, {"broker": "upstox", "stock_ticker": trade.stock_ticker})
                     raise HTTPException(status_code=400, detail="Failed to place Upstox trade")
@@ -250,7 +250,7 @@ async def create_trade(
                 raise HTTPException(status_code=503, detail=f"Upstox service unavailable: {str(e)}")
 
         # Validate holdings for sell before creating trade record
-        if trade.order_type == "sell":
+        if trade.transaction_type == "sell":
             try:
                 validate_sell(db, user.id, trade.stock_ticker, trade.quantity)
             except InsufficientHoldingsError as e:
@@ -263,18 +263,19 @@ async def create_trade(
                 new_trade = Trade(
                     user_id=user.id,
                     stock_ticker=trade.stock_ticker,
-                    buy_price=trade.buy_price if trade.order_type == "buy" else None,
+                    buy_price=trade.price if trade.transaction_type == "buy" else None,
                     quantity=trade.quantity,
-                    capital_used=trade.buy_price * trade.quantity if trade.order_type == "buy" else 0,
+                    capital_used=trade.price * trade.quantity if trade.transaction_type == "buy" else 0,
                     order_executed_at=datetime.utcnow(),
-                    status="open" if trade.order_type == "buy" else "closed",
-                    sell_price=trade.buy_price if trade.order_type == "sell" else None,
+                    status="open" if trade.transaction_type == "buy" else "closed",
+                    sell_price=trade.price if trade.transaction_type == "sell" else None,
                     brokerage_charge=trade.brokerage_charge or 0,
-                    mtf_charge=trade.mtf_charge or 0 if trade.trade_type == "mtf" else 0,
-                    trade_type=trade.trade_type
+                    mtf_charge=trade.mtf_charge or 0 if trade.type == "mtf" else 0,
+                    type=trade.type,
+                    order_execution_type=trade.order_execution_type
                 )
                 db.add(new_trade)
-                if trade.order_type == "buy":
+                if trade.transaction_type == "buy":
                     apply_buy_with_funds(db, user, new_trade.stock_ticker, new_trade.quantity, new_trade.buy_price or 0)
                 else:
                     apply_sell_with_funds(db, user, new_trade.stock_ticker, new_trade.quantity, new_trade.sell_price or new_trade.buy_price or 0)
@@ -347,22 +348,25 @@ async def update_trade(
             log_error("user_not_found", Exception("User not found"), current_user, correlation_id, {"email": current_user.email})
             raise HTTPException(status_code=404, detail="User not found")
 
-        if trade_update.order_type == "sell" and trade.status == "open":
+        if trade_update.transaction_type == "sell" and trade.status == "open":
             # Execute sell order if closing an open trade
+            order_data = {
+                "tradingsymbol": trade_update.stock_ticker,
+                "exchange": "NSE",
+                "transaction_type": "SELL",
+                "order_type": trade_update.order_execution_type,
+                "quantity": trade_update.quantity,
+                "product": "MTF" if trade_update.type == "mtf" else "CNC"
+            }
+            if trade_update.order_execution_type == "LIMIT":
+                order_data["price"] = trade_update.price
             if user.broker == "zerodha":
                 async with httpx.AsyncClient() as client:
                     try:
                         response = await client.post(
                             "https://api.kite.trade/orders/regular",
                             headers={"Authorization": f"token {user.session_id}"},
-                            data={
-                                "tradingsymbol": trade_update.stock_ticker,
-                                "exchange": "NSE",
-                                "transaction_type": "SELL",
-                                "order_type": "MARKET",
-                                "quantity": trade_update.quantity,
-                                "product": "MTF" if trade_update.type == "mtf" else "CNC"
-                            },
+                            data=order_data,
                             timeout=10
                         )
                         if response.status_code == 401:
@@ -371,14 +375,7 @@ async def update_trade(
                             response = await client.post(
                                 "https://api.kite.trade/orders/regular",
                                 headers={"Authorization": f"token {new_access_token}"},
-                                data={
-                                    "tradingsymbol": trade_update.stock_ticker,
-                                    "exchange": "NSE",
-                                    "transaction_type": "SELL",
-                                    "order_type": "MARKET",
-                                    "quantity": trade_update.quantity,
-                                    "product": "MTF" if trade_update.type == "mtf" else "CNC"
-                                },
+                                data=order_data,
                                 timeout=10
                             )
                         if response.status_code != 200:
@@ -392,15 +389,18 @@ async def update_trade(
                 access_token = await get_groww_access_token(user, db, correlation_id)
                 groww = GrowwAPI(access_token)
                 try:
-                    response = groww.place_order(
-                        symbol=trade_update.stock_ticker,
-                        exchange="NSE",
-                        transaction_type="SELL",
-                        order_type="MARKET",
-                        quantity=trade_update.quantity,
-                        product="MTF" if trade_update.type == "mtf" else "DELIVERY",
-                        timeout=10
-                    )
+                    order_kwargs = {
+                        "symbol": trade_update.stock_ticker,
+                        "exchange": "NSE",
+                        "transaction_type": "SELL",
+                        "order_type": trade_update.order_execution_type,
+                        "quantity": trade_update.quantity,
+                        "product": "MTF" if trade_update.type == "mtf" else "DELIVERY",
+                        "timeout": 10
+                    }
+                    if trade_update.order_execution_type == "LIMIT":
+                        order_kwargs["price"] = trade_update.price
+                    response = groww.place_order(**order_kwargs)
                     if not response.get("success"):
                         log_error("groww_trade_failed", Exception("Trade placement failed"), user, correlation_id, {"broker": "groww", "stock_ticker": trade_update.stock_ticker})
                         raise HTTPException(status_code=400, detail="Failed to place Groww sell trade")
@@ -414,19 +414,20 @@ async def update_trade(
                     config.access_token = user.session_id
                     config.api_key = settings.UPSTOX_API_KEY
                     api = upstox_client.OrderApi(upstox_client.ApiClient(config))
-                    response = api.place_order(
-                        quantity=trade_update.quantity,
-                        product="M" if trade_update.type == "mtf" else "D",
-                        validity="DAY",
-                        price=0,  # Market order
-                        tag="",
-                        instrument_token=trade_update.stock_ticker,
-                        order_type="MARKET",
-                        transaction_type="SELL",
-                        disclosed_quantity=0,
-                        trigger_price=0,
-                        is_amo=False
-                    )
+                    order_kwargs = {
+                        "quantity": trade_update.quantity,
+                        "product": "M" if trade_update.type == "mtf" else "D",
+                        "validity": "DAY",
+                        "price": trade_update.price if trade_update.order_execution_type == "LIMIT" else 0,
+                        "tag": "",
+                        "instrument_token": trade_update.stock_ticker,
+                        "order_type": trade_update.order_execution_type,
+                        "transaction_type": "SELL",
+                        "disclosed_quantity": 0,
+                        "trigger_price": 0,
+                        "is_amo": False
+                    }
+                    response = api.place_order(**order_kwargs)
                     if not response or not hasattr(response, 'order_id'):
                         log_error("upstox_trade_failed", Exception("Trade placement failed"), user, correlation_id, {"broker": "upstox", "stock_ticker": trade_update.stock_ticker})
                         raise HTTPException(status_code=400, detail="Failed to place Upstox sell trade")
@@ -437,17 +438,21 @@ async def update_trade(
                     log_error("upstox_trade_api_error", e, user, correlation_id, {"broker": "upstox", "stock_ticker": trade_update.stock_ticker})
                     raise HTTPException(status_code=503, detail=f"Upstox service unavailable: {str(e)}")
 
-            trade.sell_price = trade_update.buy_price  # Use input price as sell_price
+            trade.sell_price = trade_update.price  # Use input price as sell_price
             trade.status = "closed"
             trade.brokerage_charge = trade_update.brokerage_charge or trade.brokerage_charge or 0
             trade.mtf_charge = trade_update.mtf_charge or trade.mtf_charge or 0 if trade_update.type == "mtf" else 0
+            trade.order_execution_type = trade_update.order_execution_type
         else:
             # Update non-sell fields
             trade.stock_ticker = trade_update.stock_ticker
-            trade.buy_price = trade_update.buy_price if trade_update.order_type == "buy" else trade.buy_price
+            trade.buy_price = trade_update.price if trade_update.transaction_type == "buy" else trade.buy_price
             trade.quantity = trade_update.quantity
-            trade.capital_used = trade_update.buy_price * trade_update.quantity if trade_update.order_type == "buy" else trade.capital_used
+            trade.capital_used = trade_update.price * trade_update.quantity if trade_update.transaction_type == "buy" else trade.capital_used
             trade.brokerage_charge = trade_update.brokerage_charge or trade.brokerage_charge or 0
+            trade.mtf_charge = trade_update.mtf_charge or trade.mtf_charge or 0 if trade_update.type == "mtf" else 0
+            trade.type = trade_update.type
+            trade.order_execution_type = trade_update.order_execution_type
             trade.mtf_charge = trade_update.mtf_charge or trade.mtf_charge or 0 if trade_update.type == "mtf" else 0
             trade.type = trade_update.type
 

@@ -7,27 +7,48 @@ from schemas.watchlist import WatchlistStockOut, WatchlistStockCreate
 from typing import List
 from kiteconnect import KiteConnect
 import logging
+import csv
+import os
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 
-# Mock data for popular stocks that can be added to watchlist
-POPULAR_STOCKS = {
-    "RELIANCE": {"name": "Reliance Industries Ltd", "exchange": "NSE"},
-    "TCS": {"name": "Tata Consultancy Services Ltd", "exchange": "NSE"},
-    "INFY": {"name": "Infosys Ltd", "exchange": "NSE"},
-    "HDFCBANK": {"name": "HDFC Bank Ltd", "exchange": "NSE"},
-    "ICICIBANK": {"name": "ICICI Bank Ltd", "exchange": "NSE"},
-    "HINDUNILVR": {"name": "Hindustan Unilever Ltd", "exchange": "NSE"},
-    "ITC": {"name": "ITC Ltd", "exchange": "NSE"},
-    "KOTAKBANK": {"name": "Kotak Mahindra Bank Ltd", "exchange": "NSE"},
-    "LT": {"name": "Larsen & Toubro Ltd", "exchange": "NSE"},
-    "AXISBANK": {"name": "Axis Bank Ltd", "exchange": "NSE"},
-    "MARUTI": {"name": "Maruti Suzuki India Ltd", "exchange": "NSE"},
-    "BAJFINANCE": {"name": "Bajaj Finance Ltd", "exchange": "NSE"},
-    "BHARTIARTL": {"name": "Bharti Airtel Ltd", "exchange": "NSE"},
-    "WIPRO": {"name": "Wipro Ltd", "exchange": "NSE"},
-    "ULTRACEMCO": {"name": "UltraTech Cement Ltd", "exchange": "NSE"},
-}
+def load_stocks_from_csv():
+    """Load stocks from CSV file"""
+    stocks = {}
+    csv_path = os.path.join(os.path.dirname(__file__), '..', 'stocks.csv')
+    
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as file:
+            csv_reader = csv.DictReader(file)
+            for row in csv_reader:
+                # Skip empty rows or rows without symbol
+                if row.get('symbol') and row.get('stock'):
+                    symbol = row['symbol'].replace('.NS', '')  # Remove .NS suffix for display
+                    stocks[symbol] = {
+                        "name": row['stock'],
+                        "exchange": "NSE"
+                    }
+    except FileNotFoundError:
+        logging.error(f"Stocks CSV file not found at {csv_path}")
+        # Fallback to some basic stocks
+        return {
+            "RELIANCE": {"name": "Reliance Industries Ltd", "exchange": "NSE"},
+            "TCS": {"name": "Tata Consultancy Services Ltd", "exchange": "NSE"},
+            "INFY": {"name": "Infosys Ltd", "exchange": "NSE"},
+        }
+    except Exception as e:
+        logging.error(f"Error reading stocks CSV: {str(e)}")
+        # Fallback to some basic stocks
+        return {
+            "RELIANCE": {"name": "Reliance Industries Ltd", "exchange": "NSE"},
+            "TCS": {"name": "Tata Consultancy Services Ltd", "exchange": "NSE"},
+            "INFY": {"name": "Infosys Ltd", "exchange": "NSE"},
+        }
+    
+    return stocks
+
+# Load stocks from CSV on module import
+STOCKS_DICT = load_stocks_from_csv()
 
 def get_real_time_price(user: UserModel, symbol: str):
     """Get real-time price for a stock symbol"""
@@ -85,7 +106,7 @@ def get_watchlist(current_user: UserModel = Depends(get_current_user), db: Sessi
     # In a real implementation, you'd store user-specific watchlists in the database
 
     watchlist_stocks = []
-    for i, (symbol, info) in enumerate(list(POPULAR_STOCKS.items())[:10]):  # Return first 10 stocks
+    for i, (symbol, info) in enumerate(list(STOCKS_DICT.items())):  # Return all stocks from CSV
         price_data = get_real_time_price(current_user, symbol)
 
         watchlist_stocks.append({
@@ -106,7 +127,7 @@ def get_watchlist(current_user: UserModel = Depends(get_current_user), db: Sessi
 @router.post("/", response_model=WatchlistStockOut)
 def add_to_watchlist(stock: WatchlistStockCreate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     """Add a stock to user's watchlist"""
-    if stock.symbol not in POPULAR_STOCKS:
+    if stock.symbol not in STOCKS_DICT:
         raise HTTPException(status_code=400, detail="Stock not found in our database")
 
     price_data = get_real_time_price(current_user, stock.symbol)
@@ -114,7 +135,7 @@ def add_to_watchlist(stock: WatchlistStockCreate, current_user: UserModel = Depe
     return {
         "id": hash(stock.symbol) % 1000,  # Mock ID
         "symbol": stock.symbol,
-        "name": POPULAR_STOCKS[stock.symbol]["name"],
+        "name": STOCKS_DICT[stock.symbol]["name"],
         "currentPrice": price_data["currentPrice"],
         "previousClose": price_data["previousClose"],
         "change": price_data["change"],
@@ -136,7 +157,7 @@ def search_stocks(query: str, current_user: UserModel = Depends(get_current_user
     query_upper = query.upper()
     results = []
 
-    for symbol, info in POPULAR_STOCKS.items():
+    for symbol, info in STOCKS_DICT.items():
         if query_upper in symbol or query_upper in info["name"].upper():
             price_data = get_real_time_price(current_user, symbol)
             results.append({

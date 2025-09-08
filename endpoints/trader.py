@@ -64,6 +64,27 @@ def ensure_trader(user: UserModel):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only traders can access this endpoint")
 
 
+def check_client_session_active(client: UserModel) -> bool:
+    """Check if client's brokerage session is active"""
+    # Session is considered active if:
+    # 1. Client has API credentials set
+    # 2. Client has a valid session_id
+    # 3. Client has a broker configured
+    # 4. Session was updated recently (within last 7 days for more lenient check)
+
+    if not client.api_key or not client.session_id or not client.broker:
+        return False
+
+    # Check if session is recent (within 7 days - more lenient)
+    if client.session_updated_at:
+        from datetime import datetime, timedelta
+        session_age = datetime.utcnow() - client.session_updated_at
+        if session_age > timedelta(days=7):
+            return False
+
+    return True
+
+
 def log_trader_action(db: Session, actor_id: int, target_id: int, action: str, description: str, details: dict | None = None):
     # Fetch last hash
     last = db.query(AuditLog).order_by(AuditLog.id.desc()).first()
@@ -124,7 +145,8 @@ def list_trader_clients(current_user: UserModel = Depends(get_current_user), db:
             status=c.status or "active",
             portfolio_value=portfolio_value,
             join_date=c.created_at,
-            broker_api_key=c.api_key
+            broker_api_key=c.api_key,
+            session_active=check_client_session_active(c)
         ))
     return result
 
@@ -159,6 +181,23 @@ def get_client_details(client_id: int, current_user: UserModel = Depends(get_cur
     active_trades = db.query(Trade).filter(Trade.user_id == client.id, Trade.status == 'active').count()
     total_trades = db.query(Trade).filter(Trade.user_id == client.id).count()
     
+    # Fetch actual active trades
+    active_trades_data = db.query(Trade).filter(Trade.user_id == client.id, Trade.status == "open").all()
+    active_trades_list = []
+    for t in active_trades_data:
+        # Mock current_price (you might want to fetch real prices from broker)
+        current_price = t.buy_price or 100.0
+        active_trades_list.append(ActiveTradeOut(
+            id=t.id,
+            stock=t.stock_ticker,
+            name=t.stock_ticker,  # You might want to fetch actual stock name
+            quantity=t.quantity,
+            buy_price=t.buy_price or 0,
+            current_price=current_price,
+            mtf_enabled=t.type == "mtf",
+            timestamp=t.order_executed_at
+        ))
+    
     return ClientDetailsOut(
         id=client.id,
         name=client.name or "",
@@ -169,12 +208,14 @@ def get_client_details(client_id: int, current_user: UserModel = Depends(get_cur
         portfolio_value=portfolio_value,
         join_date=client.created_at,
         broker_api_key=client.api_key,
+        session_active=check_client_session_active(client),
         allocated_funds=allocated_funds,
         remaining_funds=remaining_funds,
         total_pnl=total_pnl,
         todays_pnl=todays_pnl,
         active_trades_count=active_trades,
-        total_trades_count=total_trades
+        total_trades_count=total_trades,
+        active_trades=active_trades_list
     )
 
 
@@ -444,7 +485,7 @@ def reset_client(client_id: int, current_user: UserModel = Depends(get_current_u
     return ResetResponse(success=True)
 
 
-class PlaceOrderRequest(BaseModel):
+class OrderRequest(BaseModel):
     client_id: int
     stock: str
     quantity: int
@@ -454,7 +495,7 @@ class PlaceOrderRequest(BaseModel):
 
 
 @router.post("/orders", response_model=OrderOut, status_code=201)
-async def place_order(order_data: PlaceOrderRequest, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+async def place_order(order_data: OrderRequest, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     ensure_trader(current_user)
     from config import settings
     if not settings.DEBUG:

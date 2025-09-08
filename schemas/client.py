@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+from schemas.trades import ActiveTradeOut
 
 class ClientBase(BaseModel):
     name: str
@@ -31,6 +32,7 @@ class ClientOut(BaseModel):
     portfolio_value: float
     join_date: datetime
     broker_api_key: Optional[str] = None
+    session_active: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +43,7 @@ class ClientDetailsOut(ClientOut):
     todays_pnl: float
     active_trades_count: int
     total_trades_count: int
+    active_trades: List[ActiveTradeOut] = []
 
 class ResetResponse(BaseModel):
     success: bool
