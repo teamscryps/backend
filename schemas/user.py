@@ -47,7 +47,7 @@ class FirstTimeAPISetup(BaseModel):
     api_key: str
     api_secret: str
     broker: str
-    request_token: str | None = None  # For Zerodha
+    request_token: str | None = None  # For Zerodha, ICICI (access token)
     totp_secret: str | None = None  # For Groww
     auth_code: str | None = None  # For Upstox
 

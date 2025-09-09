@@ -52,7 +52,7 @@ STOCKS_DICT = load_stocks_from_csv()
 
 def get_real_time_price(user: UserModel, symbol: str):
     """Get real-time price for a stock symbol"""
-    if not user.api_key or not user.session_id or user.broker != "zerodha":
+    if not user.api_key or not user.session_id:
         # Return null values if no active session
         return {
             "currentPrice": None,
@@ -65,26 +65,57 @@ def get_real_time_price(user: UserModel, symbol: str):
         }
 
     try:
-        kite = KiteConnect(api_key=user.api_key)
-        kite.set_access_token(user.session_id)
+        if user.broker == "zerodha":
+            kite = KiteConnect(api_key=user.api_key)
+            kite.set_access_token(user.session_id)
 
-        kite_symbol = f"NSE:{symbol}"
-        quotes = kite.quote([kite_symbol])
+            kite_symbol = f"NSE:{symbol}"
+            quotes = kite.quote([kite_symbol])
 
-        if kite_symbol in quotes:
-            quote = quotes[kite_symbol]
-            last_price = quote.get("last_price", 0)
-            prev_close = quote.get("ohlc", {}).get("close", last_price * 0.95)
+            if kite_symbol in quotes:
+                quote = quotes[kite_symbol]
+                last_price = quote.get("last_price", 0)
+                prev_close = quote.get("ohlc", {}).get("close", last_price * 0.95)
 
-            return {
-                "currentPrice": last_price,
-                "previousClose": prev_close,
-                "change": last_price - prev_close,
-                "changePercent": ((last_price - prev_close) / prev_close * 100) if prev_close > 0 else 0,
-                "high": quote.get("ohlc", {}).get("high", last_price * 1.02),
-                "low": quote.get("ohlc", {}).get("low", last_price * 0.98),
-                "volume": str(quote.get("volume", 1200000))
-            }
+                return {
+                    "currentPrice": last_price,
+                    "previousClose": prev_close,
+                    "change": last_price - prev_close,
+                    "changePercent": ((last_price - prev_close) / prev_close * 100) if prev_close > 0 else 0,
+                    "high": quote.get("ohlc", {}).get("high", last_price * 1.02),
+                    "low": quote.get("ohlc", {}).get("low", last_price * 0.98),
+                    "volume": str(quote.get("volume", 1200000))
+                }
+        elif user.broker == "icici":
+            try:
+                from icici_client import ICICIAPIClient
+                icici = ICICIAPIClient(
+                    api_key=user.api_key,
+                    api_secret=user.api_secret,
+                    access_token=user.session_id
+                )
+
+                quote_data = icici.get_quote(symbol, "NSE")
+                last_price = quote_data.get('last_price', 0)
+                prev_close = quote_data.get('previous_close', last_price * 0.95)
+
+                return {
+                    "currentPrice": last_price,
+                    "previousClose": prev_close,
+                    "change": last_price - prev_close,
+                    "changePercent": ((last_price - prev_close) / prev_close * 100) if prev_close > 0 else 0,
+                    "high": quote_data.get('day_high', last_price * 1.02),
+                    "low": quote_data.get('day_low', last_price * 0.98),
+                    "volume": str(quote_data.get('volume', 1200000))
+                }
+            except ImportError:
+                logging.error("ICICI client not available")
+            except Exception as e:
+                logging.error(f"ICICI API error for {symbol}: {str(e)}")
+        else:
+            # Unsupported broker
+            pass
+
     except Exception as e:
         logging.error(f"Error fetching price for {symbol}: {str(e)}")
 

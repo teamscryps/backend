@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session, selectinload
 from typing import List
 from database import get_db
-from schemas.trades import TradeOut, TradeCreate
+from schemas.trades import TradeOut, TradeCreate, ActiveTradeOut
 from schemas.user import User
 from models.trade import Trade
 from models.holding import Holding
@@ -489,6 +489,37 @@ async def list_trades(current_user: User = Depends(get_current_user), db: Sessio
     except Exception as e:
         log_error("list_trades_failed", e, current_user, correlation_id)
         raise HTTPException(status_code=500, detail=f"Error listing trades: {str(e)}")
+
+@router.get(
+    "/trades/active",
+    response_model=List[ActiveTradeOut]
+)
+async def list_active_trades(current_user: User = Depends(get_current_user), db: Session = Depends(get_db), request: Request = None):
+    """
+    List all active trades for the authenticated user.
+    """
+    correlation_id = await log_request(request, "list_active_trades", current_user)
+    try:
+        trades = db.query(Trade).filter(Trade.user_id == current_user.id, Trade.status == "open").all()
+        result = []
+        for t in trades:
+            # Mock current_price - in production, you'd fetch real-time price
+            current_price = t.buy_price or 100.0
+            result.append(ActiveTradeOut(
+                id=t.id,
+                stock=t.stock_ticker,
+                name=t.stock_ticker,  # Could be enhanced to fetch actual stock name
+                quantity=t.quantity,
+                buy_price=t.buy_price or 0,
+                current_price=current_price,
+                mtf_enabled=t.type == "mtf",
+                timestamp=t.order_executed_at
+            ))
+        log_action("active_trades_listed", current_user, correlation_id, {"active_trade_count": len(result)})
+        return result
+    except Exception as e:
+        log_error("list_active_trades_failed", e, current_user, correlation_id)
+        raise HTTPException(status_code=500, detail=f"Error listing active trades: {str(e)}")
 
 def generate_zerodha_checksum(api_key: str, token: str, api_secret: str) -> str:
     """

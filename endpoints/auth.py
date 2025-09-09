@@ -249,6 +249,10 @@ async def first_time_api_setup(
             plain_refresh_token = api_setup.totp_secret
         elif api_setup.broker == "upstox" and api_setup.auth_code:
             plain_refresh_token = api_setup.auth_code
+        elif api_setup.broker == "icici" and api_setup.request_token:
+            # For ICICI, request_token is actually the access token
+            user.session_id = api_setup.request_token
+            user.session_updated_at = datetime.utcnow()
         
         user.broker_refresh_token = plain_refresh_token
     
