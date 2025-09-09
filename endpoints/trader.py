@@ -17,7 +17,7 @@ from services.holdings import (
 )
 from schemas.trader import TraderClientOut, TraderClientTradeOut, TraderOrderResponse
 from schemas.client import ClientOut, ClientDetailsOut, ClientCreate, ClientUpdate, ResetResponse
-from schemas.trades import ActiveTradeOut, TransactionOut
+from schemas.trades import ActiveTradeOut, TransactionOut, AllActiveTradesOut
 from schemas.order import OrderOut
 from schemas.stock import StockOptionOut, StockDetailsOut
 from datetime import datetime
@@ -313,35 +313,6 @@ def delete_client(client_id: int, current_user: UserModel = Depends(get_current_
     return {"message": "Client deleted successfully"}
 
 
-@router.get("/clients/{client_id}/transactions", response_model=List[TransactionOut])
-def get_client_transactions(client_id: int, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
-    ensure_trader(current_user)
-    from config import settings
-    if not settings.DEBUG:
-        # Ensure mapping exists
-        mapping = db.query(TraderClient).filter(TraderClient.trader_id == current_user.id, TraderClient.client_id == client_id).first()
-        if not mapping:
-            raise HTTPException(status_code=404, detail="Client not linked to trader")
-    trades = db.query(Trade).filter(Trade.user_id == client_id).order_by(Trade.order_executed_at.desc()).all()
-    result = []
-    for t in trades:
-        # Mock current_price; in real, fetch from broker
-        current_price = t.sell_price or t.buy_price or 100.0  # Placeholder
-        pnl = (current_price - t.buy_price) * t.quantity if t.buy_price else 0
-        pnl_percent = (pnl / (t.buy_price * t.quantity)) * 100 if t.buy_price and t.buy_price * t.quantity != 0 else 0
-        result.append(TransactionOut(
-            id=t.id,
-            stock=t.stock_ticker,
-            name=t.stock_ticker,  # Placeholder for name
-            quantity=t.quantity,
-            buy_price=t.buy_price or 0,
-            current_price=current_price,
-            mtf_enabled=t.type == "mtf",
-            timestamp=t.order_executed_at,
-            type="buy" if t.buy_price else "sell",  # Assuming buy if buy_price set
-            pnl=pnl,
-            pnl_percent=pnl_percent
-        ))
     return result
 
 
@@ -369,6 +340,50 @@ def get_client_active_trades(client_id: int, current_user: UserModel = Depends(g
             mtf_enabled=t.type == "mtf",
             timestamp=t.order_executed_at
         ))
+    return result
+
+
+@router.get("/all-clients/trades/active", response_model=List[AllActiveTradesOut])
+def get_all_clients_active_trades(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    ensure_trader(current_user)
+    from config import settings
+    
+    # Get all clients linked to this trader
+    if settings.DEBUG:
+        # In debug mode, get all users with role 'client'
+        clients = db.query(UserModel).filter(UserModel.role == 'client').all()
+    else:
+        # Get clients linked through TraderClient mapping
+        client_ids = db.query(TraderClient.client_id).filter(TraderClient.trader_id == current_user.id).subquery()
+        clients = db.query(UserModel).filter(UserModel.id.in_(client_ids)).all()
+    
+    result = []
+    for client in clients:
+        # Get active trades for this client
+        trades = db.query(Trade).filter(Trade.user_id == client.id, Trade.status == "open").all()
+        active_trades = []
+        
+        for t in trades:
+            # Mock current_price (you can implement real-time price fetching here)
+            current_price = t.buy_price or 100.0
+            active_trades.append(ActiveTradeOut(
+                id=t.id,
+                stock=t.stock_ticker,
+                name=t.stock_ticker,  # You can fetch actual company name from CSV or API
+                quantity=t.quantity,
+                buy_price=t.buy_price or 0,
+                current_price=current_price,
+                mtf_enabled=t.type == "mtf",
+                timestamp=t.order_executed_at
+            ))
+        
+        if active_trades:  # Only include clients with active trades
+            result.append(AllActiveTradesOut(
+                client_id=client.id,
+                client_name=client.name or f"Client {client.id}",
+                trades=active_trades
+            ))
+    
     return result
 
 
@@ -1120,3 +1135,76 @@ async def bulk_trade_all_clients(payload: BulkTradeAllRequest, current_user: Use
         "failed_trades": failed_trades,
         "results": results
     }
+
+
+@router.get("/admin/all-users/trades/active", response_model=List[AllActiveTradesOut])
+def get_all_users_active_trades(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Admin endpoint: Get active trades for all users in the system.
+    Requires trader/admin privileges.
+    """
+    ensure_trader(current_user)  # For now, using trader check as admin check
+    
+    # Get all users (both traders and clients)
+    all_users = db.query(UserModel).filter(UserModel.status == 'active').all()
+    
+    result = []
+    for user in all_users:
+        # Get active trades for this user
+        trades = db.query(Trade).filter(Trade.user_id == user.id, Trade.status == "open").all()
+        active_trades = []
+        
+        for t in trades:
+            # Mock current_price (you can implement real-time price fetching here)
+            current_price = t.buy_price or 100.0
+            active_trades.append(ActiveTradeOut(
+                id=t.id,
+                stock=t.stock_ticker,
+                name=t.stock_ticker,  # You can fetch actual company name from CSV or API
+                quantity=t.quantity,
+                buy_price=t.buy_price or 0,
+                current_price=current_price,
+                mtf_enabled=t.type == "mtf",
+                timestamp=t.order_executed_at
+            ))
+        
+        if active_trades:  # Only include users with active trades
+            result.append(AllActiveTradesOut(
+                client_id=user.id,
+                client_name=user.name or user.email or f"User {user.id}",
+                trades=active_trades
+            ))
+    
+    return result
+
+
+@router.get("/admin/trades/active/all", response_model=List[ActiveTradeOut])
+def get_all_active_trades_admin(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Admin endpoint: Get all active trades across all users in the system.
+    Requires trader/admin privileges.
+    """
+    ensure_trader(current_user)  # For now, using trader check as admin check
+    
+    # Get all active trades from all users
+    trades = db.query(Trade).filter(Trade.status == "open").all()
+    
+    result = []
+    for t in trades:
+        # Get user information for the trade
+        user = db.query(UserModel).filter(UserModel.id == t.user_id).first()
+        
+        # Mock current_price (you can implement real-time price fetching here)
+        current_price = t.buy_price or 100.0
+        result.append(ActiveTradeOut(
+            id=t.id,
+            stock=t.stock_ticker,
+            name=t.stock_ticker,  # You can fetch actual company name from CSV or API
+            quantity=t.quantity,
+            buy_price=t.buy_price or 0,
+            current_price=current_price,
+            mtf_enabled=t.type == "mtf",
+            timestamp=t.order_executed_at
+        ))
+    
+    return result

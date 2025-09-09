@@ -10,6 +10,10 @@ except ImportError:  # allow tests without growwapi
     GrowwAPI = None  # type: ignore
 import upstox_client
 from upstox_client.rest import ApiException
+try:
+    from icici_client import ICICIAPIClient
+except ImportError:  # allow tests without icici_client
+    ICICIAPIClient = None
 
 def execute_bulk_trade(broker_type, stock_symbol, percent_quantity, user_ids):
     db = SessionLocal()
@@ -63,6 +67,42 @@ def execute_bulk_trade(broker_type, stock_symbol, percent_quantity, user_ids):
                     
                 except Exception as e:
                     print(f"Groww API error for user {user.id}: {e}")
+                    buy_price = 0
+                    quantity = 0
+                    
+            elif broker_type == 'icici' and user.session_id and user.api_key and ICICIAPIClient is not None:
+                try:
+                    icici = ICICIAPIClient(
+                        api_key=user.api_key,
+                        api_secret=user.api_secret,
+                        access_token=user.session_id
+                    )
+                    
+                    # Get current market price for the stock
+                    quote_data = icici.get_quote(stock_symbol, "NSE")
+                    current_price = quote_data.get('last_price', 0)
+                    
+                    # Calculate quantity based on capital and current price
+                    quantity = int(capital_to_use / current_price) if current_price > 0 else 0
+                    
+                    if quantity > 0:
+                        # Place order through ICICI
+                        order_response = icici.place_order(
+                            symbol=stock_symbol,
+                            side="BUY",
+                            quantity=quantity,
+                            order_type="MARKET",
+                            product="CNC",
+                            exchange="NSE"
+                        )
+                        
+                        buy_price = current_price
+                    else:
+                        buy_price = 0
+                    
+                except Exception as e:
+                    print(f"ICICI API error for user {user.id}: {e}")
+                    # Set default values when API fails
                     buy_price = 0
                     quantity = 0
                     

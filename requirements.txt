@@ -27,7 +27,8 @@ cryptography==45.0.5
 
 # HTTP & API
 httpx==0.27.0
-aiosmtplib==4.0.1
+requests==2.31.0
+aiosmtplib==1.3.2
 
 # Caching & Rate Limiting
 redis==6.2.0

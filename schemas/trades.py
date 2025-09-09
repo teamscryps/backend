@@ -1,6 +1,6 @@
 from pydantic import BaseModel, field_validator, ConfigDict
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 class TradeBase(BaseModel):
     price: float
@@ -78,6 +78,13 @@ class ActiveTradeOut(BaseModel):
     current_price: float  # Need to fetch current price
     mtf_enabled: bool
     timestamp: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AllActiveTradesOut(BaseModel):
+    client_id: int
+    client_name: str
+    trades: List[ActiveTradeOut]
 
     model_config = ConfigDict(from_attributes=True)
 

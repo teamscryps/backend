@@ -51,10 +51,10 @@ def load_stocks_from_csv():
 STOCKS_DATA = load_stocks_from_csv()
 
 def get_real_market_data(user: UserModel, symbols: List[str]):
-    """Fetch real market data from Zerodha if user has active session"""
+    """Fetch real market data from broker if user has active session"""
     market_data = []
 
-    if not user.api_key or not user.session_id or user.broker != "zerodha":
+    if not user.api_key or not user.session_id:
         # Return null values if no active session
         for stock in STOCKS_DATA:  # Return all stocks from CSV
             market_data.append({
@@ -66,29 +66,86 @@ def get_real_market_data(user: UserModel, symbols: List[str]):
         return market_data
 
     try:
-        kite = KiteConnect(api_key=user.api_key)
-        kite.set_access_token(user.session_id)
+        if user.broker == "zerodha":
+            kite = KiteConnect(api_key=user.api_key)
+            kite.set_access_token(user.session_id)
 
-        # Format symbols for Kite API
-        kite_symbols = [f"NSE:{symbol}" for symbol in symbols]
+            # Format symbols for Kite API
+            kite_symbols = [f"NSE:{symbol}" for symbol in symbols]
 
-        # Fetch quotes
-        quotes = kite.quote(kite_symbols)
+            # Fetch quotes
+            quotes = kite.quote(kite_symbols)
 
-        for stock in STOCKS_DATA:
-            symbol = stock["symbol"]
-            kite_symbol = f"NSE:{symbol}"
+            for stock in STOCKS_DATA:
+                symbol = stock["symbol"]
+                kite_symbol = f"NSE:{symbol}"
 
-            if kite_symbol in quotes:
-                quote = quotes[kite_symbol]
-                market_data.append({
-                    "symbol": symbol,
-                    "name": stock["name"],
-                    "price": quote.get("last_price", 0),
-                    "mtf_amount": quote.get("last_price", 0) * 20  # Approximate MTF amount
-                })
-            else:
-                # Return null values for this stock
+                if kite_symbol in quotes:
+                    quote = quotes[kite_symbol]
+                    market_data.append({
+                        "symbol": symbol,
+                        "name": stock["name"],
+                        "price": quote.get("last_price", 0),
+                        "mtf_amount": quote.get("last_price", 0) * 20  # Approximate MTF amount
+                    })
+                else:
+                    # Return null values for this stock
+                    market_data.append({
+                        "symbol": stock["symbol"],
+                        "name": stock["name"],
+                        "price": None,
+                        "mtf_amount": None
+                    })
+
+        elif user.broker == "icici":
+            try:
+                from icici_client import ICICIAPIClient
+                icici = ICICIAPIClient(
+                    api_key=user.api_key,
+                    api_secret=user.api_secret,
+                    access_token=user.session_id
+                )
+
+                for stock in STOCKS_DATA:
+                    symbol = stock["symbol"]
+                    if symbol in symbols:
+                        try:
+                            quote_data = icici.get_quote(symbol, "NSE")
+                            price = quote_data.get('last_price', 0)
+                            market_data.append({
+                                "symbol": symbol,
+                                "name": stock["name"],
+                                "price": price,
+                                "mtf_amount": price * 20 if price else None  # Approximate MTF amount
+                            })
+                        except Exception as e:
+                            print(f"ICICI quote error for {symbol}: {e}")
+                            market_data.append({
+                                "symbol": stock["symbol"],
+                                "name": stock["name"],
+                                "price": None,
+                                "mtf_amount": None
+                            })
+                    else:
+                        market_data.append({
+                            "symbol": stock["symbol"],
+                            "name": stock["name"],
+                            "price": None,
+                            "mtf_amount": None
+                        })
+
+            except ImportError:
+                # Fallback if ICICI client not available
+                for stock in STOCKS_DATA:
+                    market_data.append({
+                        "symbol": stock["symbol"],
+                        "name": stock["name"],
+                        "price": None,
+                        "mtf_amount": None
+                    })
+        else:
+            # Unsupported broker
+            for stock in STOCKS_DATA:
                 market_data.append({
                     "symbol": stock["symbol"],
                     "name": stock["name"],
@@ -126,22 +183,44 @@ def get_stock_details(symbol: str, current_user: UserModel = Depends(get_current
         raise HTTPException(status_code=404, detail="Stock not found")
 
     # Try to get real market data
-    if current_user.api_key and current_user.session_id and current_user.broker == "zerodha":
+    if current_user.api_key and current_user.session_id:
         try:
-            kite = KiteConnect(api_key=current_user.api_key)
-            kite.set_access_token(current_user.session_id)
+            if current_user.broker == "zerodha":
+                kite = KiteConnect(api_key=current_user.api_key)
+                kite.set_access_token(current_user.session_id)
 
-            kite_symbol = f"NSE:{symbol.upper()}"
-            quotes = kite.quote([kite_symbol])
+                kite_symbol = f"NSE:{symbol.upper()}"
+                quotes = kite.quote([kite_symbol])
 
-            if kite_symbol in quotes:
-                quote = quotes[kite_symbol]
-                return StockDetailsOut(
-                    symbol=symbol.upper(),
-                    name=stock_info["name"],
-                    price=quote.get("last_price", 0),
-                    mtf_amount=quote.get("last_price", 0) * 20
-                )
+                if kite_symbol in quotes:
+                    quote = quotes[kite_symbol]
+                    return StockDetailsOut(
+                        symbol=symbol.upper(),
+                        name=stock_info["name"],
+                        price=quote.get("last_price", 0),
+                        mtf_amount=quote.get("last_price", 0) * 20
+                    )
+            elif current_user.broker == "icici":
+                try:
+                    from icici_client import ICICIAPIClient
+                    icici = ICICIAPIClient(
+                        api_key=current_user.api_key,
+                        api_secret=current_user.api_secret,
+                        access_token=current_user.session_id
+                    )
+
+                    quote_data = icici.get_quote(symbol.upper(), "NSE")
+                    price = quote_data.get('last_price', 0)
+                    return StockDetailsOut(
+                        symbol=symbol.upper(),
+                        name=stock_info["name"],
+                        price=price,
+                        mtf_amount=price * 20 if price else None
+                    )
+                except ImportError:
+                    logging.error("ICICI client not available")
+                except Exception as e:
+                    logging.error(f"ICICI API error: {str(e)}")
         except Exception as e:
             logging.error(f"Error fetching stock details: {str(e)}")
 
