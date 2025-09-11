@@ -41,6 +41,200 @@ export const getCurrentUser = () => {
   return currentUser;
 };
 
+// API Setup and Brokerage Functions
+export const setupAPICredentials = async (apiData) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/first-time-api-setup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(apiData),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'Failed to set up API credentials');
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('API setup error:', error);
+    throw error;
+  }
+};
+
+export const activateBrokerage = async (brokerageData) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/activate-brokerage`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(brokerageData),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'Failed to activate brokerage');
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Brokerage activation error:', error);
+    throw error;
+  }
+};
+
+// ICICI Integration Functions
+export const getICICILoginURL = async (apiKey, redirectUri) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/icici/login-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        redirect_uri: redirectUri
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate ICICI login URL');
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('ICICI login URL generation error:', error);
+    throw error;
+  }
+};
+
+export const completeICICIIntegration = async (apiKey, apiSecret) => {
+  try {
+    // Step 1: Set up API credentials
+    await setupAPICredentials({
+      api_key: apiKey,
+      api_secret: apiSecret,
+      broker: 'icici'
+    });
+
+    // Step 2: Get authorization URL
+    const loginURLData = await getICICILoginURL(apiKey, window.location.origin + '/icici/callback');
+
+    return {
+      success: true,
+      login_url: loginURLData.login_url,
+      message: loginURLData.message
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+export const activateICICIWithCode = async (apiKey, apiSecret, authorizationCode, redirectUri) => {
+  try {
+    const result = await activateBrokerage({
+      brokerage: 'icici',
+      api_url: 'https://api.icicidirect.com',
+      api_key: apiKey,
+      api_secret: apiSecret,
+      authorization_code: authorizationCode,
+      redirect_uri: redirectUri
+    });
+
+    return {
+      success: true,
+      message: result.message,
+      access_token: result.access_token
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Zerodha Integration Functions
+export const getZerodhaLoginURL = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/zerodha/login-url`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate Zerodha login URL');
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Zerodha login URL generation error:', error);
+    throw error;
+  }
+};
+
+export const completeZerodhaIntegration = async (apiKey, apiSecret) => {
+  try {
+    // Step 1: Set up API credentials
+    await setupAPICredentials({
+      api_key: apiKey,
+      api_secret: apiSecret,
+      broker: 'zerodha'
+    });
+
+    // Step 2: Get login URL
+    const loginURLData = await getZerodhaLoginURL();
+
+    return {
+      success: true,
+      login_url: loginURLData.login_url,
+      message: loginURLData.message
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+export const activateZerodhaWithToken = async (apiKey, apiSecret, requestToken) => {
+  try {
+    const result = await activateBrokerage({
+      brokerage: 'zerodha',
+      api_url: 'https://api.kite.trade',
+      api_key: apiKey,
+      api_secret: apiSecret,
+      request_token: requestToken
+    });
+
+    return {
+      success: true,
+      message: result.message,
+      session_id: result.session_id
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
 // Initialize authentication state on module load
 export const initializeAuth = async () => {
   if (isLoggedIn()) {

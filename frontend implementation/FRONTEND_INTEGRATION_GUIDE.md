@@ -175,6 +175,7 @@ const showAPISetupModal = () => {
             <option value="zerodha">Zerodha</option>
             <option value="groww">Groww</option>
             <option value="upstox">Upstox</option>
+            <option value="icici">ICICI Direct</option>
           </select>
         </div>
         
@@ -205,11 +206,12 @@ const showAPISetupModal = () => {
           </div>
         </div>
         
-        <!-- Upstox specific -->
-        <div id="upstox-fields" style="display: none;">
+        <!-- ICICI specific -->
+        <div id="icici-fields" style="display: none;">
           <div class="form-group">
-            <label for="auth_code">Authorization Code</label>
-            <input type="text" name="auth_code" placeholder="Authorization Code" />
+            <label for="authorization_code">Authorization Code (Optional - will be generated)</label>
+            <input type="text" name="authorization_code" placeholder="Authorization Code from ICICI OAuth" />
+            <small>Leave empty to generate authorization URL first</small>
           </div>
         </div>
         
@@ -228,6 +230,7 @@ const showAPISetupModal = () => {
     document.getElementById('zerodha-fields').style.display = 'none';
     document.getElementById('groww-fields').style.display = 'none';
     document.getElementById('upstox-fields').style.display = 'none';
+    document.getElementById('icici-fields').style.display = 'none';
     
     // Show relevant fields based on broker
     if (broker === 'zerodha') {
@@ -236,6 +239,8 @@ const showAPISetupModal = () => {
       document.getElementById('groww-fields').style.display = 'block';
     } else if (broker === 'upstox') {
       document.getElementById('upstox-fields').style.display = 'block';
+    } else if (broker === 'icici') {
+      document.getElementById('icici-fields').style.display = 'block';
     }
   });
   
@@ -273,21 +278,33 @@ const showAPISetupModal = () => {
             alert('Failed to generate Zerodha login URL: ' + setupResult.error);
           }
         }
-      } else {
-        // Other brokers - original flow
-        const apiData = {
-          broker: formData.get('broker'),
-          api_key: formData.get('api_key'),
-          api_secret: formData.get('api_secret'),
-          request_token: formData.get('request_token') || null,
-          totp_secret: formData.get('totp_secret') || null,
-          auth_code: formData.get('auth_code') || null
-        };
-        
-        await setupAPICredentials(apiData);
-        document.querySelector('.api-setup-modal').remove();
-        window.location.href = '/dashboard';
-      }
+      } else if (broker === 'icici') {
+        // ICICI OAuth flow
+        const apiKey = formData.get('api_key');
+        const apiSecret = formData.get('api_secret');
+        const authorizationCode = formData.get('authorization_code');
+
+        if (authorizationCode) {
+          // Direct activation with authorization code
+          const activationResult = await activateICICIWithCode(apiKey, apiSecret, authorizationCode, window.location.origin + '/icici/callback');
+          if (activationResult.success) {
+            alert('ICICI Direct activated successfully!');
+            document.querySelector('.api-setup-modal').remove();
+            window.location.href = '/dashboard';
+          } else {
+            alert('ICICI Direct activation failed: ' + activationResult.error);
+          }
+        } else {
+          // Generate authorization URL first
+          const setupResult = await completeICICIIntegration(apiKey, apiSecret);
+          if (setupResult.success) {
+            // Open authorization URL
+            window.open(setupResult.login_url, '_blank');
+            alert('ICICI Direct authorization URL opened. Please authorize the application and copy the authorization code from the redirect URL, then submit this form again with the code.');
+          } else {
+            alert('Failed to generate ICICI Direct authorization URL: ' + setupResult.error);
+          }
+        }
     } catch (error) {
       console.error('API setup failed:', error);
       alert('Failed to set up API credentials: ' + error.message);
