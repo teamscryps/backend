@@ -58,10 +58,12 @@ class BrokerageActivation(BaseModel):
     request_token: str | None = None  # For Zerodha
     totp_secret: str | None = None  # For Groww
     auth_code: str | None = None  # For Upstox OAuth
+    authorization_code: str | None = None  # For ICICI OAuth
+    redirect_uri: str | None = None  # For ICICI OAuth
 
     @field_validator("brokerage")
     def validate_brokerage(cls, v):
-        valid_brokerages = ["zerodha", "groww", "upstox"]
+        valid_brokerages = ["zerodha", "groww", "upstox", "icici"]
         if v.lower() not in valid_brokerages:
             raise ValueError("Invalid brokerage")
         return v.lower()
@@ -484,6 +486,45 @@ async def activate_brokerage(
                 log_error("upstox_session_creation_failed", e, user, correlation_id, {"broker": "upstox"})
                 raise HTTPException(status_code=400, detail=f"Failed to validate Upstox credentials: {str(e)}")
 
+        elif activation.brokerage == "icici":
+            if not activation.authorization_code:
+                log_error("missing_authorization_code", Exception("Authorization code required"), user, correlation_id, {"broker": "icici"})
+                raise HTTPException(status_code=400, detail="Authorization code required for ICICI")
+            if not activation.redirect_uri:
+                log_error("missing_redirect_uri", Exception("Redirect URI required"), user, correlation_id, {"broker": "icici"})
+                raise HTTPException(status_code=400, detail="Redirect URI required for ICICI")
+
+            try:
+                # Exchange authorization code for access token
+                async with httpx.AsyncClient() as client:
+                    token_url = "https://api.icicidirect.com/oauth/token"
+                    token_data = {
+                        'grant_type': 'authorization_code',
+                        'code': activation.authorization_code,
+                        'client_id': activation.api_key,
+                        'client_secret': activation.api_secret,
+                        'redirect_uri': activation.redirect_uri
+                    }
+
+                    response = await client.post(token_url, data=token_data)
+                    response.raise_for_status()
+
+                    token_response = response.json()
+                    access_token = token_response.get('access_token')
+                    refresh_token = token_response.get('refresh_token')
+
+                    if not access_token:
+                        raise Exception("No access token received from ICICI")
+
+                    session_id_value = access_token
+                    refresh_token_value = refresh_token
+
+                    log_action("icici_session_created", user, correlation_id, {"broker": "icici"})
+
+            except Exception as e:
+                log_error("icici_session_creation_failed", e, user, correlation_id, {"broker": "icici"})
+                raise HTTPException(status_code=400, detail=f"Failed to validate ICICI credentials: {str(e)}")
+
         # Update user with encrypted brokerage details
         user.broker = activation.brokerage
         user.api_key = activation.api_key
@@ -831,6 +872,60 @@ async def get_zerodha_login_url(
     except Exception as e:
         log_error("zerodha_login_url_failed", e, current_user, correlation_id, {"broker": "zerodha"})
         raise HTTPException(status_code=500, detail=f"Error generating Zerodha login URL: {str(e)}")
+
+# ICICI Login URL Endpoint
+class ICICILoginRequest(BaseModel):
+    api_key: str
+    redirect_uri: str
+
+@router.post("/icici/login-url")
+async def get_icici_login_url(
+    login_request: ICICILoginRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Generate ICICI authorization URL for OAuth flow.
+    """
+    correlation_id = await log_request(request, "get_icici_login_url", current_user)
+    try:
+        user = await get_user_by_email(db, current_user.email)
+        if not user:
+            log_error("user_not_found", Exception("User not found"), current_user, correlation_id, {"email": current_user.email})
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Generate ICICI OAuth authorization URL
+        base_url = "https://api.icicidirect.com/oauth/authorize"
+        params = {
+            'client_id': login_request.api_key,
+            'redirect_uri': login_request.redirect_uri,
+            'response_type': 'code',
+            'scope': 'trading',
+            'state': f"user_{user.id}_{correlation_id[:8]}"  # Add state for security
+        }
+
+        # Build authorization URL
+        auth_url = base_url + '?' + '&'.join([f"{k}={v}" for k, v in params.items()])
+
+        log_action("icici_login_url_generated", user, correlation_id, {"broker": "icici"})
+        return {
+            "login_url": auth_url,
+            "redirect_uri": login_request.redirect_uri,
+            "message": "Open this URL in your browser to authorize ICICI Direct. After authorization, you'll be redirected with an authorization code.",
+            "instructions": [
+                "1. Click the login URL to open ICICI Direct authorization page",
+                "2. Login with your ICICI Direct credentials",
+                "3. Grant trading permissions to the application",
+                "4. After successful authorization, you'll be redirected with authorization code",
+                "5. Copy the authorization code from the redirect URL",
+                "6. Use the authorization code to complete the activation"
+            ]
+        }
+
+    except Exception as e:
+        log_error("icici_login_url_failed", e, current_user, correlation_id, {"broker": "icici"})
+        raise HTTPException(status_code=500, detail=f"Error generating ICICI login URL: {str(e)}")
 
 @router.post("/zerodha/daily-login")
 async def zerodha_daily_login(

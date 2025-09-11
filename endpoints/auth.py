@@ -331,6 +331,36 @@ async def get_zerodha_session_status(
     
     return {"session_valid": False, "reason": "No session timestamp"}
 
+@router.get("/icici/session-status")
+async def get_icici_session_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Check if ICICI session is valid for today"""
+    user = await get_user_by_email(db, current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not user.api_credentials_set or user.broker != "icici":
+        return {"session_valid": False, "reason": "ICICI not set up"}
+    
+    if not user.session_id:
+        return {"session_valid": False, "reason": "No active session"}
+    
+    # Check if session was updated today (IST)
+    from datetime import datetime, timezone, timedelta
+    ist_tz = timezone(timedelta(hours=5, minutes=30))  # IST timezone
+    today_ist = datetime.now(ist_tz).date()
+    
+    if user.session_updated_at:
+        session_date_ist = user.session_updated_at.replace(tzinfo=timezone.utc).astimezone(ist_tz).date()
+        if session_date_ist == today_ist:
+            return {"session_valid": True, "session_updated_at": user.session_updated_at}
+        else:
+            return {"session_valid": False, "reason": "Session expired (daily login required)"}
+    
+    return {"session_valid": False, "reason": "No session timestamp"}
+
 @router.post("/update-api-credentials")
 async def update_api_credentials(
     api_setup: FirstTimeAPISetup,
